@@ -1,5 +1,4 @@
 import json
-import re
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from html import escape
@@ -9,20 +8,19 @@ from telegram import BotCommand
 from telegram.constants import ParseMode
 from telegram.ext import Application, ApplicationBuilder, CommandHandler, filters
 
-from .analysis import is_rate_limit, load_report
+from .analysis import is_rate_limit, load_report, report_section
 from .messages import FOOTER, chunk_text, format_plan_list, format_status
 from .models import Position
 from .store import Store
-from .symbols import from_yf
+from .symbols import normalize_ticker
+
+__all__ = ["BotCommands", "build_bot", "normalize_ticker", "send"]
 
 AskFn = Callable[[str, str, str, str, Position | None], Awaitable[str]]
 
 PRIORITY_PLAN_CMD = 1
 PRIORITY_CANDIDATE = 3
 
-_CODE_RE = re.compile(r"^(US|HK|MY|SG|JP)\.[A-Z0-9.]{1,10}$")
-_YF_RE = re.compile(r"^[A-Z0-9]{1,6}\.(HK|KL|SI|T)$")
-_US_RE = re.compile(r"^[A-Z]{1,5}([.-][A-Z])?$")
 
 # Shown in Telegram's "/" menu (registered at startup) and in /help.
 BOT_COMMANDS = [
@@ -45,19 +43,6 @@ HELP = """<b>Commands</b>
 /holdings: your moomoo positions and their levels
 /watch TICKER, /unwatch TICKER: extra tickers for the weekly analysis
 /status: service health and AI usage"""
-
-
-def normalize_ticker(arg: str) -> str | None:
-    a = arg.strip().upper()
-    if _CODE_RE.match(a):
-        if a.startswith("HK."):
-            return f"HK.{int(a[3:]):05d}" if a[3:].isdigit() else None
-        return a
-    if _YF_RE.match(a):
-        return from_yf(a)
-    if _US_RE.match(a):
-        return f"US.{a.replace('-', '.')}"
-    return None
 
 
 class BotCommands:
@@ -125,7 +110,7 @@ class BotCommands:
         parts = [f"<b>Why: {escape(code)}</b> (analysis from {escape(at)} UTC)"]
         if plan:
             parts.append(f"Plan #{plan.id}: {plan.fields.action.value}, {escape(plan.fields.reasoning)}")
-        parts += ["", escape(_section(report, "Final decision") or report[:3500]), "",
+        parts += ["", escape(report_section(report, "Final decision") or report[:3500]), "",
                   f"Ask a follow-up with /ask {escape(context.args[0].upper())} your question", FOOTER]
         await self._reply(update, "\n".join(parts))
 
@@ -199,12 +184,6 @@ class BotCommands:
     async def help(self, update: Any, context: Any) -> None:
         if self._is_owner(update):
             await self._reply(update, HELP)
-
-
-def _section(report: str, title: str) -> str | None:
-    """Text of a '## title' section from the saved report."""
-    match = re.search(rf"^## {re.escape(title)}\n(.*?)(?=^## |\Z)", report, re.S | re.M)
-    return match.group(1).strip() if match else None
 
 
 async def register_commands(app: Any) -> None:

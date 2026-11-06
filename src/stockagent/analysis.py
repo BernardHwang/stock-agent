@@ -4,6 +4,7 @@ import asyncio
 import copy
 import json
 import logging
+import re
 import sys
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -130,6 +131,12 @@ def answer_question(code: str, question: str, report: str, at: str, held: Positi
     if isinstance(content, list):  # some providers return content blocks
         content = "".join(b.get("text", "") if isinstance(b, dict) else str(b) for b in content)
     return str(content).strip()
+
+
+def report_section(report: str, title: str) -> str | None:
+    """Text of a '## title' section from a saved report."""
+    match = re.search(rf"^## {re.escape(title)}\n(.*?)(?=^## |\Z)", report, re.S | re.M)
+    return match.group(1).strip() if match else None
 
 
 def is_rate_limit(exc: BaseException) -> bool:
