@@ -102,3 +102,10 @@ def test_tick_handler_forwards_last_price():
     g.connect()
     g._forward_quotes(pd.DataFrame({"code": ["US.NVDA"], "last_price": [101.25]}))
     assert ticks == [("US.NVDA", 101.25)]
+
+
+def test_subscribe_returns_failed_codes():
+    q = FakeQuote()
+    q.subscribe = lambda codes, subtypes, **kw: (-1, "quota exceeded")
+    g, _ = gw(quote=q)
+    assert g.subscribe({"US.A"}) == {"US.A"}

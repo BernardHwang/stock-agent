@@ -108,3 +108,47 @@ async def test_holdings_review_queues_held(app):
 
 async def _noop():
     return None
+
+
+async def test_sl_review_queued_once_per_plan_per_day(app):
+    held_plan(app.store)
+    await app._tick("US.NVDA", 85.0)
+    app.store.next_queue_item()  # taken by the worker
+    plan = app.store.active_plan("US.NVDA")
+    plan.fired = set()  # a new analysis re-armed the stop
+    app.store.update_plan(plan)
+    await app._tick("US.NVDA", 84.0)
+    assert app.store.pending_count() == 0
+
+
+async def test_holdings_review_queues_positions_without_plan(app):
+    app.store.save_positions([Position(code="US.AMD", qty=5, avg_cost=50)], NOW)
+    await app.holdings_review()
+    item = app.store.next_queue_item()
+    assert item.code == "US.AMD" and item.priority == 2
+
+
+async def test_subscribe_failure_alerts_owner(app):
+    held_plan(app.store)
+    app.gateway.subscribe = lambda codes: set(codes)  # every code failed
+    await app.refresh_watch()
+    await app.refresh_watch()
+    assert len(app.sent) == 1 and "US.NVDA" in app.sent[0]
+
+
+async def test_news_review_once_per_stock_per_day(app, monkeypatch):
+    held_plan(app.store)
+    hits = [("US.NVDA", {"id": "1", "title": "Nvidia misses earnings", "link": ""})]
+    monkeypatch.setattr("stockagent.app.poll_news", lambda store, codes: hits)
+    await app.news_poll()
+    app.store.next_queue_item()
+    await app.news_poll()
+    assert app.store.pending_count() == 0
+
+
+async def test_tick_errors_reported(app, monkeypatch):
+    def boom(*a):
+        raise RuntimeError("db locked")
+    monkeypatch.setattr(app.rules, "on_price", boom)
+    await app._tick("US.NVDA", 85.0)
+    assert any("price_alerts" in m for m in app.sent)

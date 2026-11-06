@@ -149,3 +149,20 @@ def test_config_passed_to_tradingagents(monkeypatch):
     assert captured["max_debate_rounds"] == 1 and captured["deep_think_llm"] == "d"
     assert captured["quick_think_llm"] == "q" and captured["llm_provider"] == "google"
     assert "BUY" in out and "support 100" in out
+
+
+async def test_stop_above_current_price_rejected(store):
+    store.enqueue("US.NVDA", "weekly", 3, NOW)
+    w, sent = make(store)
+    w.price_fn = lambda code: 85.0  # already below the proposed stop of 90
+    await w.drain()
+    assert store.active_plan("US.NVDA") is None and "no valid plan" in sent[0]
+
+
+async def test_failure_after_extraction_does_not_leave_item_running(store, monkeypatch):
+    store.enqueue("US.NVDA", "weekly", 3, NOW)
+    w, sent = make(store)
+    monkeypatch.setattr(analysis, "apply_new_analysis", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db")))
+    await w.drain()
+    assert store.pending_count() == 0 and not any(i.status == "running" for i in store.pending_items())
+    assert "failed" in sent[0]

@@ -51,3 +51,11 @@ def test_status_and_summary_render():
     assert "OpenD" in format_status({"opend": "connected", "ai_runs_today": 2, "max_runs_per_day": 6,
                                      "queue": 3, "last_screen": None, "problems": []})
     assert "No plans" in format_weekly_summary([])
+
+
+def test_chunk_text_respects_telegram_limit():
+    from stockagent.messages import chunk_text
+    text = "\n".join(f"line {i} " + "x" * 50 for i in range(300))
+    chunks = chunk_text(text)
+    assert len(chunks) > 1 and all(len(c) <= 4000 for c in chunks)
+    assert "\n".join(chunks) == text

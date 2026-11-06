@@ -23,6 +23,7 @@ def test_is_major(title, major):
 
 
 def test_news_seen_not_repeated(store):
+    store.kv_set("news_init:US.NVDA", "1")
     items = {"US.NVDA": [{"id": "1", "title": "Nvidia misses earnings", "link": "u"},
                          {"id": "2", "title": "Top 10 tech picks", "link": "u"}]}
     first = poll_news(store, ["US.NVDA"], items.get)
@@ -41,3 +42,10 @@ def test_parse_yf_news_both_shapes():
            {"uuid": "b", "title": "T2", "link": "http://y"}]
     assert parse_yf_news(raw) == [{"id": "a", "title": "T1", "link": "http://x"},
                                   {"id": "b", "title": "T2", "link": "http://y"}]
+
+
+def test_first_poll_for_a_stock_only_marks_existing_headlines(store):
+    items = {"US.NVDA": [{"id": "1", "title": "Nvidia misses earnings", "link": "u"}]}
+    assert poll_news(store, ["US.NVDA"], items.get) == []
+    items["US.NVDA"].append({"id": "2", "title": "Nvidia cuts guidance", "link": "u"})
+    assert [i["id"] for _, i in poll_news(store, ["US.NVDA"], items.get)] == ["2"]

@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -28,7 +28,7 @@ from .models import Alert, PlanState
 from .moomoo_gw import MoomooGateway
 from .news import poll_news
 from .outcomes import update_outcomes
-from .pricefeed import PriceFeed, make_feed
+from .pricefeed import PriceFeed, make_feed, yf_last_prices
 from .rules import RuleEngine
 from .screener import screen, yf_fetch
 from .store import Store
@@ -57,7 +57,9 @@ class App:
                                                 settings.moomoo_security_firm, settings.markets, self.on_tick)
         self.feed = feed or make_feed(settings.price_source, self.gateway, self.on_tick, settings.poll_interval_s)
         self._sender = sender
-        self.worker = AnalysisWorker(settings, self.store, self.health, self.notify, now=now)
+        self._tasks: set[asyncio.Task] = set()
+        self.worker = AnalysisWorker(settings, self.store, self.health, self.notify, now=now,
+                                     price_fn=self.current_price)
         self.commands = BotCommands(settings.telegram_chat_id, self.store, self.status, self.kick_queue, now=now)
 
     # messaging
@@ -79,32 +81,67 @@ class App:
                 if plan is not None:
                     await self.notify(format_level_alert(a, plan, now, self.settings.tz))
                 if a.kind == "sl":
-                    self.store.enqueue(a.code, "sl", PRIORITY_URGENT, now)
+                    self._enqueue_once_per_day(a.code, "sl", f"sl_review:{a.plan_id}")
             elif a.kind == "health":
                 await self.notify(format_health(a.text))
             else:
                 await self.notify(format_info(a.text))
         if alerts:
-            self.refresh_watch()
+            await self.refresh_watch()
+
+    def _enqueue_once_per_day(self, code: str, reason: str, key: str) -> bool:
+        """Urgent re-reviews are capped at one per key per day so a flapping level can't burn the AI quota."""
+        day_key = f"{key}:{self.now().date().isoformat()}"
+        if self.store.kv_get(day_key):
+            return False
+        self.store.kv_set(day_key, "1")
+        self.store.enqueue(code, reason, PRIORITY_URGENT, self.now())
+        return True
+
+    def _spawn(self, coro: Coroutine[Any, Any, Any]) -> None:
+        assert self.loop is not None
+        task = self.loop.create_task(coro)
+        self._tasks.add(task)  # asyncio keeps only weak references to tasks
+        task.add_done_callback(self._tasks.discard)
 
     # prices
-    def refresh_watch(self) -> None:
+    async def refresh_watch(self) -> None:
         try:
-            self.feed.set_codes(self.rules.watched_codes())
+            failed = await asyncio.to_thread(self.feed.set_codes, self.rules.watched_codes())
         except Exception:
             log.exception("could not update price subscriptions")
+            failed = {"(all)"}
+        if failed:
+            alert = self.health.problem("subscribe", "No live prices for " + ", ".join(sorted(failed))
+                                        + ". Their alerts won't fire. Check quote permissions or switch "
+                                          "PRICE_SOURCE=poll.")
+            if alert:
+                await self.notify(format_health(alert.text))
+        elif self.health.resolved("subscribe"):
+            await self.notify(format_info("Live prices are working for every watched ticker again."))
+
+    def current_price(self, code: str) -> float | None:
+        """Blocking; used by the analysis worker thread to sanity-check new levels."""
+        try:
+            return self.gateway.snapshot([code]).get(code)
+        except Exception:
+            return yf_last_prices([code]).get(code)
 
     def on_tick(self, code: str, price: float) -> None:
         """Called from the moomoo SDK thread."""
-        if self.loop is not None:
-            self.loop.call_soon_threadsafe(lambda: self.loop.create_task(self._tick(code, price)))  # type: ignore[union-attr]
+        loop = self.loop
+        if loop is not None:
+            loop.call_soon_threadsafe(self._spawn, self._tick(code, price))
 
     async def _tick(self, code: str, price: float) -> None:
-        alerts = self.rules.on_price(code, price, self.now())
-        if alerts:
-            await self.handle_alerts(alerts)
-            if any(a.kind == "sl" for a in alerts):
-                await self.kick_queue()
+        async def handle() -> None:
+            alerts = self.rules.on_price(code, price, self.now())
+            if alerts:
+                await self.handle_alerts(alerts)
+                if any(a.kind == "sl" for a in alerts):
+                    await self.kick_queue()
+
+        await self.run_job("price_alerts", handle)
 
     # jobs
     async def run_job(self, name: str, fn: Callable[[], Awaitable[Any]]) -> None:
@@ -120,13 +157,13 @@ class App:
 
     async def kick_queue(self) -> None:
         if self.loop is not None:
-            self.loop.create_task(self.run_job("drain_queue", self.drain_queue))
+            self._spawn(self.run_job("drain_queue", self.drain_queue))
         else:
             await self.run_job("drain_queue", self.drain_queue)
 
     async def drain_queue(self) -> None:
         await self.worker.drain()
-        self.refresh_watch()
+        await self.refresh_watch()
 
     async def weekly_screen(self) -> None:
         s, now = self.settings, self.now()
@@ -144,6 +181,10 @@ class App:
     async def holdings_review(self) -> None:
         for plan in self.store.plans_in({PlanState.HELD}):
             self.store.enqueue(plan.code, "review", PRIORITY_REVIEW, self.now())
+        # Holdings whose first analysis failed or was invalid still have no plan: retry them weekly.
+        for pos in self.store.last_positions():
+            if self.store.active_plan(pos.code) is None:
+                self.store.enqueue(pos.code, "new_holding", PRIORITY_REVIEW, self.now())
         await self.kick_queue()
 
     async def holdings_sync(self) -> None:
@@ -157,7 +198,7 @@ class App:
         if self.health.resolved("holdings"):
             await self.notify(format_info("Reading moomoo positions works again."))
         await self.handle_alerts(sync_holdings(self.store, positions, self.now()))
-        self.refresh_watch()
+        await self.refresh_watch()
         if self.store.pending_count():
             await self.kick_queue()
 
@@ -167,15 +208,16 @@ class App:
             return
         hits = await asyncio.to_thread(poll_news, self.store, held)
         for code, item in hits:
-            self.store.enqueue(code, "news", PRIORITY_URGENT, self.now())
-            await self.notify(format_news_alert(code, item["title"], item.get("link"), self.now(), self.settings.tz))
+            queued = self._enqueue_once_per_day(code, "news", f"news_review:{code}")
+            await self.notify(format_news_alert(code, item["title"], item.get("link"), self.now(), self.settings.tz,
+                                                review_queued=queued))
         if hits:
             await self.kick_queue()
 
     async def expire_stale(self) -> None:
         for p in expire_stale(self.store, self.now()):
             await self.notify(format_info(f"Plan #{p.id} for {p.code} expired after 60 days without a buy."))
-        self.refresh_watch()
+        await self.refresh_watch()
 
     async def outcomes(self) -> None:
         await asyncio.to_thread(update_outcomes, self.store)
@@ -201,7 +243,7 @@ class App:
             recovered = self.health.resolved("opend")
             if recovered:
                 await self.notify(format_info(recovered.text))
-                self.refresh_watch()
+                await self.refresh_watch()
 
     def status(self) -> dict:
         problems = self.health.snapshot()
@@ -257,7 +299,7 @@ class App:
             await self.notify(format_info("Stock agent started. Send /help for commands."))
             await self.run_job("opend_health", self.opend_health)
             await self.run_job("holdings_sync", self.holdings_sync)
-            self.refresh_watch()
+            await self.refresh_watch()
             try:
                 await asyncio.Event().wait()
             finally:

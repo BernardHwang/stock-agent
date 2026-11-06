@@ -18,6 +18,31 @@ _LEVEL_TITLE = {
 }
 
 
+TELEGRAM_CHUNK = 4000  # Telegram's hard limit is 4096 characters
+
+
+def chunk_text(text: str, limit: int = TELEGRAM_CHUNK) -> list[str]:
+    """Split on line breaks into Telegram-sized messages (a single over-long line is hard-cut)."""
+    chunks: list[str] = []
+    current = ""
+    for line in text.split("\n"):
+        while len(line) > limit:
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.append(line[:limit])
+            line = line[limit:]
+        candidate = f"{current}\n{line}" if current else line
+        if len(candidate) > limit:
+            chunks.append(current)
+            current = line
+        else:
+            current = candidate
+    if current or not chunks:
+        chunks.append(current)
+    return chunks
+
+
 def _ts(now: datetime, tz: str) -> str:
     """Internal datetimes are naive UTC; show them in the owner's time zone."""
     local = (now if now.tzinfo else now.replace(tzinfo=UTC)).astimezone(ZoneInfo(tz))
@@ -79,10 +104,13 @@ def format_level_alert(alert: Alert, plan: Plan, now: datetime, tz: str) -> str:
     return "\n".join(parts)
 
 
-def format_news_alert(code: str, title: str, link: str | None, now: datetime, tz: str) -> str:
+def format_news_alert(code: str, title: str, link: str | None, now: datetime, tz: str,
+                      review_queued: bool = True) -> str:
     link_line = f'\n<a href="{escape(link, quote=True)}">Read more</a>' if link else ""
+    review = ("A fresh hold-or-exit review has been queued." if review_queued
+              else "A review already ran today; use /plan to request another.")
     return (f"📰 <b>Major news on {escape(code)}</b>\n{escape(title)}{link_line}\n\n"
-            f"A fresh hold-or-exit review has been queued.\n<i>{_ts(now, tz)}</i>\n{FOOTER}")
+            f"{review}\n<i>{_ts(now, tz)}</i>\n{FOOTER}")
 
 
 def format_info(text: str) -> str:

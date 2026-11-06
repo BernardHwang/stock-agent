@@ -12,7 +12,7 @@ from .config import Settings
 from .health import Health
 from .lifecycle import apply_new_analysis
 from .messages import format_health, format_info, format_invalid_plan, format_no_plan, format_plan
-from .models import PlanFields, Position, validate_fields
+from .models import PlanFields, Position, validate_against_price, validate_fields
 from .store import Store
 from .symbols import to_yf
 
@@ -101,9 +101,10 @@ def _utcnow() -> datetime:
 class AnalysisWorker:
     def __init__(self, settings: Settings, store: Store, health: Health, notify: Callable[[str], Awaitable[None]],
                  run: RunFn = run_tradingagents, extract: ExtractFn = extract_plan,
-                 now: Callable[[], datetime] = _utcnow):
+                 now: Callable[[], datetime] = _utcnow,
+                 price_fn: Callable[[str], float | None] | None = None):
         self.settings, self.store, self.health, self.notify = settings, store, health, notify
-        self.run, self.extract, self.now = run, extract, now
+        self.run, self.extract, self.now, self.price_fn = run, extract, now, price_fn
         self._lock = asyncio.Lock()
 
     async def drain(self) -> None:
@@ -136,21 +137,34 @@ class AnalysisWorker:
                                           "automatically; use /plan to try again."))
             return True
 
-        recovered = self.health.resolved("ai_quota")
-        if recovered:
+        if self.health.resolved("ai_quota"):
             await self.notify(format_info("AI quota available again."))
-        errors = validate_fields(fields)
-        if errors:
-            log.warning("invalid plan for %s: %s", code, errors)
+        try:
+            errors = validate_fields(fields) or validate_against_price(fields, await self._price(code))
+            if errors:
+                log.warning("invalid plan for %s: %s", code, errors)
+                self.store.finish_queue_item(item_id, "done")
+                await self.notify(format_invalid_plan(code, errors))
+                return True
+            plan = apply_new_analysis(self.store, code, fields, reason, now, held=held is not None)
             self.store.finish_queue_item(item_id, "done")
-            await self.notify(format_invalid_plan(code, errors))
+        except Exception as exc:
+            log.exception("saving plan failed for %s", code)
+            self.store.finish_queue_item(item_id, "failed")
+            await self.notify(format_info(f"Analysis for {code} failed while saving ({type(exc).__name__})."))
             return True
-
-        plan = apply_new_analysis(self.store, code, fields, reason, now, held=held is not None)
-        self.store.finish_queue_item(item_id, "done")
         text = format_plan(plan, now, self.settings.tz) if plan.id else format_no_plan(code, fields)
         await self.notify(text)
         return True
+
+    async def _price(self, code: str) -> float | None:
+        if self.price_fn is None:
+            return None
+        try:
+            return await asyncio.to_thread(self.price_fn, code)
+        except Exception:
+            log.info("no current price for %s", code)
+            return None
 
 
 def _cli() -> None:

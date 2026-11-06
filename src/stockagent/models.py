@@ -85,6 +85,15 @@ def validate_fields(f: PlanFields) -> list[str]:
     return errors
 
 
+def validate_against_price(f: PlanFields, price: float | None) -> list[str]:
+    """The report is based on the last close; reject levels the live price has already crossed."""
+    if price is None or f.sl is None:
+        return []
+    if f.sl >= price:
+        return [f"stop loss {f.sl:.2f} is at or above the current price {price:.2f}"]
+    return []
+
+
 def risk_reward(f: PlanFields) -> float | None:
     if f.action != Action.BUY or None in (f.entry_low, f.entry_high, f.tp, f.sl):
         return None

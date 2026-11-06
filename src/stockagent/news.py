@@ -51,11 +51,15 @@ def poll_news(store: Store, codes: list[str], fetch: FetchFn = yf_news) -> list[
         except Exception as exc:
             log.info("news fetch failed for %s: %s", code, exc)
             continue
+        # The first poll of a stock only records what is already out there, so old headlines don't alert.
+        first_poll = store.kv_get(f"news_init:{code}") is None
         for item in items:
             key = f"{code}:{item['id']}"
             if store.seen_news(key):
                 continue
             store.mark_news(key)
-            if is_major(item["title"]):
+            if not first_poll and is_major(item["title"]):
                 hits.append((code, item))
+        if first_poll:
+            store.kv_set(f"news_init:{code}", "1")
     return hits

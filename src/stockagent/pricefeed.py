@@ -17,7 +17,10 @@ FetchFn = Callable[[list[str]], dict[str, float]]
 
 
 class PriceFeed(Protocol):
-    def set_codes(self, codes: set[str]) -> None: ...
+    def set_codes(self, codes: set[str]) -> set[str]:
+        """Watch ``codes``; returns the ones that cannot be watched."""
+        ...
+
     async def start(self) -> None: ...
     async def stop(self) -> None: ...
 
@@ -28,8 +31,8 @@ class MoomooFeed:
     def __init__(self, gateway: Any):
         self.gateway = gateway
 
-    def set_codes(self, codes: set[str]) -> None:
-        self.gateway.subscribe(codes)
+    def set_codes(self, codes: set[str]) -> set[str]:
+        return set(self.gateway.subscribe(codes) or set())
 
     async def start(self) -> None:
         pass
@@ -65,8 +68,9 @@ class PollingFeed:
         self.codes: set[str] = set()
         self._task: asyncio.Task | None = None
 
-    def set_codes(self, codes: set[str]) -> None:
+    def set_codes(self, codes: set[str]) -> set[str]:
         self.codes = set(codes)
+        return set()
 
     async def poll_once(self) -> None:
         if not self.codes:

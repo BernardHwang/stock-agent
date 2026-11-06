@@ -4,6 +4,7 @@ Deliberately exposes only quotes and position queries. Nothing here can unlock t
 """
 
 import logging
+import threading
 from collections.abc import Callable
 from typing import Any
 
@@ -28,6 +29,7 @@ class MoomooGateway:
         self._trade_factory = trade_factory or self._default_trade
         self._quote: Any = None
         self._subscribed: set[str] = set()
+        self._sub_lock = threading.RLock()
         self._healthy = True
 
     def _default_quote(self) -> Any:
@@ -60,29 +62,37 @@ class MoomooGateway:
             if pd.notna(price) and price > 0:
                 self.on_tick(str(code), float(price))
 
-    def subscribe(self, codes: set[str]) -> None:
-        """Make the live subscription equal ``codes``. US tickers get 24h (pre/post/overnight) quotes."""
-        codes = {c for c in codes if market_of(c) in self.markets}
-        removed, added = self._subscribed - codes, codes - self._subscribed
-        if removed:
-            ret, err = self._quote.unsubscribe(sorted(removed), [moomoo.SubType.QUOTE])
-            if ret != moomoo.RET_OK:  # moomoo refuses unsubscribing within a minute of subscribing
-                log.info("unsubscribe deferred: %s", err)
-            else:
-                self._subscribed -= removed
-        us = sorted(c for c in added if market_of(c) == "US")
-        other = sorted(c for c in added if market_of(c) != "US")
-        if us:
-            self._sub(us, session=moomoo.Session.ALL)
-        if other:
-            self._sub(other)
+    def subscribe(self, codes: set[str]) -> set[str]:
+        """Make the live subscription equal ``codes``. US tickers get 24h (pre/post/overnight) quotes.
 
-    def _sub(self, codes: list[str], **kw: Any) -> None:
+        Returns the codes that could not be subscribed (no live quotes for them).
+        Called from both the event loop and the health-check thread, hence the lock.
+        """
+        with self._sub_lock:
+            failed = {c for c in codes if market_of(c) not in self.markets}
+            codes = codes - failed
+            removed, added = self._subscribed - codes, codes - self._subscribed
+            if removed:
+                ret, err = self._quote.unsubscribe(sorted(removed), [moomoo.SubType.QUOTE])
+                if ret != moomoo.RET_OK:  # moomoo refuses unsubscribing within a minute of subscribing
+                    log.info("unsubscribe deferred: %s", err)
+                else:
+                    self._subscribed -= removed
+            us = sorted(c for c in added if market_of(c) == "US")
+            other = sorted(c for c in added if market_of(c) != "US")
+            if us:
+                failed |= self._sub(us, session=moomoo.Session.ALL)
+            if other:
+                failed |= self._sub(other)
+            return failed
+
+    def _sub(self, codes: list[str], **kw: Any) -> set[str]:
         ret, err = self._quote.subscribe(codes, [moomoo.SubType.QUOTE], **kw)
         if ret == moomoo.RET_OK:
             self._subscribed |= set(codes)
-        else:
-            log.warning("subscribe failed for %s: %s", codes, err)
+            return set()
+        log.warning("subscribe failed for %s: %s", codes, err)
+        return set(codes)
 
     def snapshot(self, codes: list[str]) -> dict[str, float]:
         ret, df = self._quote.get_market_snapshot(codes)
@@ -120,8 +130,9 @@ class MoomooGateway:
             else:
                 reason = None
         if reason is None and not self._healthy:
-            codes, self._subscribed = self._subscribed, set()
-            self.subscribe(codes)
+            with self._sub_lock:
+                codes, self._subscribed = self._subscribed, set()
+                self.subscribe(codes)
         self._healthy = reason is None
         return reason
 

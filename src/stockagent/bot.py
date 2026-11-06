@@ -8,7 +8,7 @@ from typing import Any
 from telegram.constants import ParseMode
 from telegram.ext import Application, ApplicationBuilder, CommandHandler, filters
 
-from .messages import format_plan_list, format_status
+from .messages import chunk_text, format_plan_list, format_status
 from .store import Store
 from .symbols import from_yf
 
@@ -52,7 +52,8 @@ class BotCommands:
 
     @staticmethod
     async def _reply(update: Any, text: str) -> None:
-        await update.message.reply_text(text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+        for chunk in chunk_text(text):
+            await update.message.reply_text(chunk, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
     async def _ticker_arg(self, update: Any, context: Any, usage: str) -> str | None:
         if not context.args:
@@ -138,5 +139,6 @@ def build_bot(token: str, commands: BotCommands) -> Application:
 
 
 async def send(app: Application, chat_id: int, text: str) -> None:
-    await app.bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.HTML,
-                               disable_web_page_preview=True)
+    for chunk in chunk_text(text):
+        await app.bot.send_message(chat_id=chat_id, text=chunk, parse_mode=ParseMode.HTML,
+                                   disable_web_page_preview=True)
