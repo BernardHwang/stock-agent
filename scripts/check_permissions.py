@@ -13,7 +13,8 @@ SAMPLES = {"US": "US.NVDA", "HK": "HK.00700", "MY": "MY.0166"}
 
 
 def main() -> int:
-    s = Settings()
+    # Only the MOOMOO_* settings matter here; Telegram values are placeholders so .env needn't be complete.
+    s = Settings(telegram_bot_token="unused", telegram_chat_id=0)
     gw = MoomooGateway(s.moomoo_host, s.moomoo_port, s.moomoo_security_firm, list(SAMPLES),
                        on_tick=lambda c, p: None)
     try:
