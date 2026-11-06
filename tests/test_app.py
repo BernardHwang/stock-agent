@@ -152,3 +152,7 @@ async def test_tick_errors_reported(app, monkeypatch):
     monkeypatch.setattr(app.rules, "on_price", boom)
     await app._tick("US.NVDA", 85.0)
     assert any("price_alerts" in m for m in app.sent)
+
+
+def test_ask_command_wired_to_ai(app):
+    assert app.commands.ask_fn == app.answer

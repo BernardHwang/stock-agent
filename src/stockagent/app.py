@@ -11,7 +11,7 @@ from apscheduler.triggers.base import BaseTrigger
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
-from .analysis import AnalysisWorker
+from .analysis import AnalysisWorker, answer_question
 from .bot import PRIORITY_CANDIDATE, BotCommands, build_bot, send
 from .config import Settings, load_screener_rules, load_universe
 from .health import Health
@@ -24,7 +24,7 @@ from .messages import (
     format_news_alert,
     format_weekly_summary,
 )
-from .models import Alert, PlanState
+from .models import Alert, PlanState, Position
 from .moomoo_gw import MoomooGateway
 from .news import poll_news
 from .outcomes import update_outcomes
@@ -60,7 +60,11 @@ class App:
         self._tasks: set[asyncio.Task] = set()
         self.worker = AnalysisWorker(settings, self.store, self.health, self.notify, now=now,
                                      price_fn=self.current_price)
-        self.commands = BotCommands(settings.telegram_chat_id, self.store, self.status, self.kick_queue, now=now)
+        self.commands = BotCommands(settings.telegram_chat_id, self.store, self.status, self.kick_queue, now=now,
+                                    ask_fn=self.answer)
+
+    async def answer(self, code: str, question: str, report: str, at: str, held: Position | None) -> str:
+        return await asyncio.to_thread(answer_question, code, question, report, at, held, self.settings)
 
     # messaging
     async def notify(self, text: str) -> None:

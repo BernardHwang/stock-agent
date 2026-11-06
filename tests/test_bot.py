@@ -99,3 +99,91 @@ async def test_holdings_lists_positions(store):
     u = upd()
     await cmds(store).holdings(u, ctx())
     assert "US.NVDA" in u.message.replies[0] and "no plan yet" in u.message.replies[0]
+
+
+def cmds_with_ask(store, answer="Because momentum is weak.", error=None):
+    calls = []
+
+    async def ask_fn(code, question, report, at, held):
+        calls.append((code, question, report, at, held))
+        if error:
+            raise error
+        return answer
+
+    c = BotCommands(OWNER, store, status_fn=lambda: {}, kick_queue=_kick, now=lambda: NOW, ask_fn=ask_fn)
+    return c, calls
+
+
+async def _kick():
+    return None
+
+
+def _save(store, code="US.MDB", text="## Final decision\nUnderweight: trim in stages.\n\n## Trader plan\nSell"):
+    from stockagent.analysis import save_report
+    save_report(store, code, text, NOW)
+
+
+async def test_why_shows_saved_analysis(store):
+    _save(store)
+    u = upd()
+    await cmds(store).why(u, ctx("MDB"))
+    text = u.message.replies[0]
+    assert "US.MDB" in text and "Underweight: trim in stages." in text and "2026-11-06" in text
+
+
+async def test_why_without_analysis_suggests_plan(store):
+    u = upd()
+    await cmds(store).why(u, ctx("MDB"))
+    assert "/plan MDB" in u.message.replies[0]
+
+
+async def test_ask_passes_report_question_and_position(store):
+    _save(store)
+    store.save_positions([Position(code="US.MDB", qty=7, avg_cost=358.09)], NOW)
+    c, calls = cmds_with_ask(store)
+    u = upd()
+    await c.ask(u, ctx("MDB", "why", "not", "sell", "everything?"))
+    code, question, report, at, held = calls[0]
+    assert code == "US.MDB" and question == "why not sell everything?" and "Underweight" in report
+    assert held.qty == 7
+    assert "Because momentum is weak." in u.message.replies[-1]
+
+
+async def test_ask_usage_and_missing_report(store):
+    c, calls = cmds_with_ask(store)
+    u = upd()
+    await c.ask(u, ctx("MDB"))
+    assert "Usage" in u.message.replies[0]
+    u = upd()
+    await c.ask(u, ctx("MDB", "why?"))
+    assert "/plan MDB" in u.message.replies[0] and calls == []
+
+
+async def test_ask_quota_error_is_friendly(store):
+    _save(store)
+    c, _ = cmds_with_ask(store, error=RuntimeError("429 RESOURCE_EXHAUSTED"))
+    u = upd()
+    await c.ask(u, ctx("MDB", "why?"))
+    assert "quota" in u.message.replies[-1].lower()
+
+
+async def test_ask_ignored_for_non_owner(store):
+    _save(store)
+    c, calls = cmds_with_ask(store)
+    await c.ask(upd(chat=999), ctx("MDB", "why?"))
+    assert calls == []
+
+
+async def test_commands_registered_in_telegram_menu():
+    from stockagent.bot import BOT_COMMANDS, register_commands
+
+    names = [n for n, _ in BOT_COMMANDS]
+    assert {"plan", "why", "ask", "plans", "holdings", "watch", "unwatch", "status", "help"} <= set(names)
+    sent = {}
+
+    class FakeBot:
+        async def set_my_commands(self, commands):
+            sent["cmds"] = [(c.command, c.description) for c in commands]
+
+    await register_commands(SimpleNamespace(bot=FakeBot()))
+    assert [n for n, _ in sent["cmds"]] == names

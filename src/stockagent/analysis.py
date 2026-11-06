@@ -2,6 +2,7 @@
 
 import asyncio
 import copy
+import json
 import logging
 import sys
 from collections.abc import Awaitable, Callable
@@ -87,6 +88,45 @@ def extract_plan(report: str, code: str, held: Position | None, settings: Settin
     return result if isinstance(result, PlanFields) else PlanFields.model_validate(result)
 
 
+ASK_PROMPT = """An investor is asking a follow-up question about your earlier analysis of {code}.
+Answer only from the analysis below. If it does not cover the question, say so plainly.
+The investor is long-only and holds for 3-12 months. {held}
+Reply in plain English, at most 1200 characters, no markdown headings.
+
+Analysis (from {at} UTC):
+{report}
+
+Question: {question}
+"""
+
+
+def save_report(store: Store, code: str, report: str, at: datetime) -> None:
+    store.kv_set(f"report:{code}", json.dumps({"at": at.isoformat(timespec="minutes"), "text": report}))
+
+
+def load_report(store: Store, code: str) -> tuple[str, str] | None:
+    """Latest saved analysis as (timestamp, text), or None."""
+    raw = store.kv_get(f"report:{code}")
+    if not raw:
+        return None
+    data = json.loads(raw)
+    return data["at"], data["text"]
+
+
+def answer_question(code: str, question: str, report: str, at: str, held: Position | None,
+                    settings: Settings) -> str:
+    from langchain.chat_models import init_chat_model
+
+    llm = init_chat_model(settings.quick_model, model_provider=langchain_provider(settings.llm_provider))
+    held_line = (f"They hold {held.qty:g} shares at average cost {held.avg_cost:.2f}." if held
+                 else "They do not hold this stock.")
+    reply = llm.invoke(ASK_PROMPT.format(code=code, held=held_line, at=at, report=report, question=question))
+    content = reply.content
+    if isinstance(content, list):  # some providers return content blocks
+        content = "".join(b.get("text", "") if isinstance(b, dict) else str(b) for b in content)
+    return str(content).strip()
+
+
 def is_rate_limit(exc: BaseException) -> bool:
     seen: BaseException | None = exc
     while seen is not None:
@@ -143,6 +183,7 @@ class AnalysisWorker:
 
         if self.health.resolved("ai_quota"):
             await self.notify(format_info("AI quota available again."))
+        save_report(self.store, code, report, now)
         try:
             errors = validate_fields(fields) or validate_against_price(fields, await self._price(code))
             if errors:

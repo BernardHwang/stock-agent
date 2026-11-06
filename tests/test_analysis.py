@@ -231,3 +231,11 @@ def test_read_held_position_found():
 def test_read_held_position_not_held_or_unavailable():
     assert analysis.read_held_position("US.MDB", settings(), gateway=_PosGw([])) is None
     assert analysis.read_held_position("US.MDB", settings(), gateway=_PosGw(error=ConnectionError())) is None
+
+
+async def test_worker_saves_report_for_follow_up_questions(store):
+    store.enqueue("US.NVDA", "weekly", 3, NOW)
+    w, _ = make(store)
+    await w.drain()
+    at, text = analysis.load_report(store, "US.NVDA")
+    assert text == "report for NVDA" and at.startswith("2026-11-06")

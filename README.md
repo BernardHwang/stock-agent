@@ -28,8 +28,12 @@ holdings, then weekly reviews, then new candidates. `MAX_RUNS_PER_DAY` caps AI u
 
 ## Telegram commands
 
-`/plan NVDA` · `/plan 0700.HK` · `/plan 0166.KL` · `/plans` · `/holdings` · `/watch TICKER` · `/unwatch TICKER` ·
-`/status` · `/help`. Only your `TELEGRAM_CHAT_ID` is answered.
+`/plan NVDA` · `/plan 0700.HK` · `/plan 0166.KL` · `/why MDB` · `/ask MDB why not sell everything?` · `/plans` ·
+`/holdings` · `/watch TICKER` · `/unwatch TICKER` · `/status` · `/help`. Only your `TELEGRAM_CHAT_ID` is answered.
+The commands are registered in Telegram's "/" menu each time the service starts.
+
+`/why` shows the reasoning from the latest saved analysis; `/ask` sends your question plus that analysis to the
+quick AI model (one short call, not counted against `MAX_RUNS_PER_DAY`).
 
 ## Setup (local trial on Windows)
 
