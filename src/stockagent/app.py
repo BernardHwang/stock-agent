@@ -1,0 +1,282 @@
+"""Wires the components into one long-running asyncio service."""
+
+import asyncio
+import logging
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.base import BaseTrigger
+from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
+
+from .analysis import AnalysisWorker
+from .bot import PRIORITY_CANDIDATE, BotCommands, build_bot, send
+from .config import Settings, load_screener_rules, load_universe
+from .health import Health
+from .holdings import sync_holdings
+from .lifecycle import expire_stale
+from .messages import (
+    format_health,
+    format_info,
+    format_level_alert,
+    format_news_alert,
+    format_weekly_summary,
+)
+from .models import Alert, PlanState
+from .moomoo_gw import MoomooGateway
+from .news import poll_news
+from .outcomes import update_outcomes
+from .pricefeed import PriceFeed, make_feed
+from .rules import RuleEngine
+from .screener import screen, yf_fetch
+from .store import Store
+
+log = logging.getLogger(__name__)
+
+PRIORITY_URGENT = 0
+PRIORITY_REVIEW = 2
+LEVEL_KINDS = {"entry", "partial_tp", "tp", "sl", "expired"}
+
+
+def _utcnow() -> datetime:
+    return datetime.now(UTC).replace(tzinfo=None)
+
+
+class App:
+    def __init__(self, settings: Settings, store: Store | None = None, gateway: Any = None,
+                 feed: PriceFeed | None = None, sender: Callable[[str], Awaitable[None]] | None = None,
+                 now: Callable[[], datetime] = _utcnow):
+        self.settings, self.now = settings, now
+        self.store = store or Store(settings.db_path)
+        self.health = Health()
+        self.rules = RuleEngine(self.store)
+        self.loop: asyncio.AbstractEventLoop | None = None
+        self.gateway = gateway or MoomooGateway(settings.moomoo_host, settings.moomoo_port,
+                                                settings.moomoo_security_firm, settings.markets, self.on_tick)
+        self.feed = feed or make_feed(settings.price_source, self.gateway, self.on_tick, settings.poll_interval_s)
+        self._sender = sender
+        self.worker = AnalysisWorker(settings, self.store, self.health, self.notify, now=now)
+        self.commands = BotCommands(settings.telegram_chat_id, self.store, self.status, self.kick_queue, now=now)
+
+    # messaging
+    async def notify(self, text: str) -> None:
+        if self._sender is None:
+            log.warning("no sender configured; dropping message")
+            return
+        try:
+            await self._sender(text)
+        except Exception:
+            log.exception("failed to send Telegram message")
+
+    async def handle_alerts(self, alerts: list[Alert]) -> None:
+        now = self.now()
+        for a in alerts:
+            self.store.log_alert(a, now)
+            if a.kind in LEVEL_KINDS and a.plan_id is not None:
+                plan = self.store.get_plan(a.plan_id)
+                if plan is not None:
+                    await self.notify(format_level_alert(a, plan, now, self.settings.tz))
+                if a.kind == "sl":
+                    self.store.enqueue(a.code, "sl", PRIORITY_URGENT, now)
+            elif a.kind == "health":
+                await self.notify(format_health(a.text))
+            else:
+                await self.notify(format_info(a.text))
+        if alerts:
+            self.refresh_watch()
+
+    # prices
+    def refresh_watch(self) -> None:
+        try:
+            self.feed.set_codes(self.rules.watched_codes())
+        except Exception:
+            log.exception("could not update price subscriptions")
+
+    def on_tick(self, code: str, price: float) -> None:
+        """Called from the moomoo SDK thread."""
+        if self.loop is not None:
+            self.loop.call_soon_threadsafe(lambda: self.loop.create_task(self._tick(code, price)))  # type: ignore[union-attr]
+
+    async def _tick(self, code: str, price: float) -> None:
+        alerts = self.rules.on_price(code, price, self.now())
+        if alerts:
+            await self.handle_alerts(alerts)
+            if any(a.kind == "sl" for a in alerts):
+                await self.kick_queue()
+
+    # jobs
+    async def run_job(self, name: str, fn: Callable[[], Awaitable[Any]]) -> None:
+        try:
+            await fn()
+        except Exception as exc:
+            log.exception("job %s failed", name)
+            alert = self.health.problem(f"job:{name}", f"Scheduled job {name} failed: {type(exc).__name__}")
+            if alert:
+                await self.notify(format_health(alert.text))
+        else:
+            self.health.resolved(f"job:{name}")
+
+    async def kick_queue(self) -> None:
+        if self.loop is not None:
+            self.loop.create_task(self.run_job("drain_queue", self.drain_queue))
+        else:
+            await self.run_job("drain_queue", self.drain_queue)
+
+    async def drain_queue(self) -> None:
+        await self.worker.drain()
+        self.refresh_watch()
+
+    async def weekly_screen(self) -> None:
+        s, now = self.settings, self.now()
+        universe = load_universe(s.universe_path)
+        exclude = {p.code for p in self.store.active_plans()}
+        codes = await asyncio.to_thread(screen, universe, s.markets, load_screener_rules(s.screener_path),
+                                        yf_fetch, s.max_candidates, exclude)
+        for code in [*codes, *self.commands.watchlist()]:
+            self.store.enqueue(code, "weekly", PRIORITY_CANDIDATE, now)
+        self.store.kv_set("last_screen", now.isoformat(timespec="minutes"))
+        await self.notify(format_info(f"Weekly screen picked {len(codes)} candidate(s): "
+                                      f"{', '.join(codes) or 'none'}. Analyses are running now."))
+        await self.kick_queue()
+
+    async def holdings_review(self) -> None:
+        for plan in self.store.plans_in({PlanState.HELD}):
+            self.store.enqueue(plan.code, "review", PRIORITY_REVIEW, self.now())
+        await self.kick_queue()
+
+    async def holdings_sync(self) -> None:
+        try:
+            positions = await asyncio.to_thread(self.gateway.positions)
+        except Exception as exc:
+            alert = self.health.problem("holdings", f"Could not read moomoo positions ({type(exc).__name__}).")
+            if alert:
+                await self.notify(format_health(alert.text))
+            return
+        if self.health.resolved("holdings"):
+            await self.notify(format_info("Reading moomoo positions works again."))
+        await self.handle_alerts(sync_holdings(self.store, positions, self.now()))
+        self.refresh_watch()
+        if self.store.pending_count():
+            await self.kick_queue()
+
+    async def news_poll(self) -> None:
+        held = [p.code for p in self.store.plans_in({PlanState.HELD})]
+        if not held:
+            return
+        hits = await asyncio.to_thread(poll_news, self.store, held)
+        for code, item in hits:
+            self.store.enqueue(code, "news", PRIORITY_URGENT, self.now())
+            await self.notify(format_news_alert(code, item["title"], item.get("link"), self.now(), self.settings.tz))
+        if hits:
+            await self.kick_queue()
+
+    async def expire_stale(self) -> None:
+        for p in expire_stale(self.store, self.now()):
+            await self.notify(format_info(f"Plan #{p.id} for {p.code} expired after 60 days without a buy."))
+        self.refresh_watch()
+
+    async def outcomes(self) -> None:
+        await asyncio.to_thread(update_outcomes, self.store)
+
+    async def weekly_summary(self) -> None:
+        since = self.now() - timedelta(weeks=26)
+        rows = []
+        for p in self.store.plans_created_since(since):
+            assert p.id is not None
+            o = self.store.outcome(p.id) or {}
+            rows.append({"id": p.id, "code": p.code, "action": p.fields.action.value, "state": p.state.value,
+                         "first_hit": o.get("first_hit"), "ret_4w": o.get("ret_4w"), "ret_12w": o.get("ret_12w"),
+                         "ret_26w": o.get("ret_26w")})
+        await self.notify(format_weekly_summary(rows))
+
+    async def opend_health(self) -> None:
+        reason = await asyncio.to_thread(self.gateway.health_check)
+        if reason:
+            alert = self.health.problem("opend", reason)
+            if alert:
+                await self.notify(format_health(alert.text + " Live prices and holdings sync are paused."))
+        else:
+            recovered = self.health.resolved("opend")
+            if recovered:
+                await self.notify(format_info(recovered.text))
+                self.refresh_watch()
+
+    def status(self) -> dict:
+        problems = self.health.snapshot()
+        return {
+            "opend": "problem" if any(p.startswith("opend") for p in problems) else "ok",
+            "ai_runs_today": self.store.count_runs_on(self.now().date()),
+            "max_runs_per_day": self.settings.max_runs_per_day,
+            "queue": self.store.pending_count(),
+            "last_screen": self.store.kv_get("last_screen"),
+            "watching": len(self.rules.watched_codes()),
+            "problems": problems,
+        }
+
+    def jobs(self) -> list[tuple[str, BaseTrigger]]:
+        tz = self.settings.tz
+        return [
+            ("weekly_screen", CronTrigger(day_of_week="sun", hour=10, timezone=tz)),
+            ("holdings_review", CronTrigger(day_of_week="mon", hour=20, timezone=tz)),
+            ("drain_queue", IntervalTrigger(minutes=30, timezone=tz)),
+            ("holdings_sync", IntervalTrigger(minutes=15, timezone=tz)),
+            ("news_poll", IntervalTrigger(minutes=30, timezone=tz)),
+            ("expire_stale", CronTrigger(hour=7, timezone=tz)),
+            ("outcomes", CronTrigger(hour=7, minute=30, timezone=tz)),
+            ("weekly_summary", CronTrigger(day_of_week="sun", hour=21, timezone=tz)),
+            ("opend_health", IntervalTrigger(minutes=5, timezone=tz)),
+        ]
+
+    async def run(self) -> None:
+        self.loop = asyncio.get_running_loop()
+        self.store.init()
+        self.store.reset_running()
+        tg = build_bot(self.settings.telegram_bot_token.get_secret_value(), self.commands)
+        self._sender = lambda text: send(tg, self.settings.telegram_chat_id, text)
+
+        if hasattr(self.gateway, "connect"):
+            try:
+                await asyncio.to_thread(self.gateway.connect)
+            except Exception as exc:
+                log.exception("OpenD connect failed")
+                self.health.problem("opend", f"Cannot connect to OpenD ({type(exc).__name__})")
+
+        scheduler = AsyncIOScheduler(timezone=self.settings.tz)
+        for name, trigger in self.jobs():
+            scheduler.add_job(self.run_job, trigger, args=[name, getattr(self, name)], id=name,
+                              max_instances=1, coalesce=True, misfire_grace_time=3600)
+
+        async with tg:
+            await tg.start()
+            assert tg.updater is not None
+            await tg.updater.start_polling(drop_pending_updates=True)
+            await self.feed.start()
+            scheduler.start()
+            await self.notify(format_info("Stock agent started. Send /help for commands."))
+            await self.run_job("opend_health", self.opend_health)
+            await self.run_job("holdings_sync", self.holdings_sync)
+            self.refresh_watch()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                scheduler.shutdown(wait=False)
+                await self.feed.stop()
+                await tg.updater.stop()
+                await tg.stop()
+                if hasattr(self.gateway, "close"):
+                    self.gateway.close()
+
+
+def main() -> None:
+    from dotenv import load_dotenv
+
+    load_dotenv()  # also exports provider API keys (GOOGLE_API_KEY, ...) for TradingAgents
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)  # its request lines include the bot token
+    settings = Settings()
+    try:
+        asyncio.run(App(settings).run())
+    except KeyboardInterrupt:
+        pass
