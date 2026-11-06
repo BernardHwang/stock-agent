@@ -179,8 +179,24 @@ def _cli() -> None:
     logging.basicConfig(level=logging.INFO)
     s = Settings()
     code = sys.argv[1] if "." in sys.argv[1] else f"US.{sys.argv[1]}"
+    held = read_held_position(code, s)
+    print(f"Position in {code}: " + (f"{held.qty:g} @ {held.avg_cost:.2f}" if held else "none found"))
     report = run_tradingagents(to_yf(code), _utcnow().date().isoformat(), s)
-    print(extract_plan(report, code, None, s).model_dump_json(indent=2))
+    print(extract_plan(report, code, held, s).model_dump_json(indent=2))
+
+
+def read_held_position(code: str, settings: Settings, gateway: Any = None) -> Position | None:
+    """Read-only lookup of the owner's moomoo position; None if not held or OpenD is unavailable."""
+    if gateway is None:
+        from .moomoo_gw import MoomooGateway
+
+        gateway = MoomooGateway(settings.moomoo_host, settings.moomoo_port, settings.moomoo_security_firm,
+                                settings.markets, on_tick=lambda c, p: None)
+    try:
+        return next((p for p in gateway.positions() if p.code == code), None)
+    except Exception as exc:
+        print(f"Could not read moomoo positions ({type(exc).__name__}); analysing as not held.")
+        return None
 
 
 if __name__ == "__main__":

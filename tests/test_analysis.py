@@ -210,3 +210,24 @@ def test_openai_config_passed_to_tradingagents(monkeypatch):
     analysis.run_tradingagents("NVDA", "2026-11-06", settings(llm_provider="openai", deep_model="gpt-6-sol",
                                                               quick_model="gpt-6-luna"))
     assert captured["llm_provider"] == "openai" and captured["quick_think_llm"] == "gpt-6-luna"
+
+
+class _PosGw:
+    def __init__(self, positions=None, error=None):
+        self._positions, self._error = positions or [], error
+
+    def positions(self):
+        if self._error:
+            raise self._error
+        return self._positions
+
+
+def test_read_held_position_found():
+    gw = _PosGw([Position(code="US.MDB", qty=3, avg_cost=350.0)])
+    held = analysis.read_held_position("US.MDB", settings(), gateway=gw)
+    assert held.qty == 3 and held.avg_cost == 350.0
+
+
+def test_read_held_position_not_held_or_unavailable():
+    assert analysis.read_held_position("US.MDB", settings(), gateway=_PosGw([])) is None
+    assert analysis.read_held_position("US.MDB", settings(), gateway=_PosGw(error=ConnectionError())) is None
