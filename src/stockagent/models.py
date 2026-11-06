@@ -137,3 +137,17 @@ class QueueItem(BaseModel):
     priority: int
     created_at: datetime
     status: Literal["pending", "running", "done", "failed"]
+
+
+class ChatMessage(BaseModel):
+    at: datetime
+    role: Literal["owner", "bot", "alert"]
+    text: str
+
+
+class Note(BaseModel):
+    id: int
+    at: datetime
+    code: str | None
+    text: str
+    active: bool

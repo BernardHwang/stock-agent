@@ -28,3 +28,9 @@ def test_load_universe_and_rules():
     assert "US.NVDA" in uni["US"] and len(uni["US"]) >= 100
     rules = load_screener_rules("config/screener.yaml")
     assert rules.min_revenue_growth == 0.10
+
+
+def test_chat_defaults():
+    s = Settings(_env_file=None, telegram_bot_token="t", telegram_chat_id=1)
+    assert s.chat_max_per_day == 1000 and s.chat_history == 20
+    assert s.deep_stale_days == 7 and s.deep_move_pct == 0.08

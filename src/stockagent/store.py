@@ -4,7 +4,7 @@ import threading
 from datetime import date, datetime
 from pathlib import Path
 
-from .models import ACTIVE_STATES, Alert, Level, Plan, PlanFields, PlanState, Position, QueueItem
+from .models import ACTIVE_STATES, Alert, ChatMessage, Level, Note, Plan, PlanFields, PlanState, Position, QueueItem
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS plans (
@@ -22,6 +22,9 @@ CREATE TABLE IF NOT EXISTS outcomes (
   plan_id INTEGER PRIMARY KEY, first_hit TEXT, ret_4w REAL, ret_12w REAL, ret_26w REAL);
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS news_seen (id TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, at TEXT NOT NULL, role TEXT NOT NULL, text TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS notes (
+  id INTEGER PRIMARY KEY, at TEXT NOT NULL, code TEXT, text TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1);
 """
 
 _ACTIVE = tuple(s.value for s in ACTIVE_STATES)
@@ -213,3 +216,38 @@ class Store:
 
     def mark_news(self, news_id: str) -> None:
         self._exec("INSERT OR IGNORE INTO news_seen(id) VALUES (?)", (news_id,))
+
+    # chat memory
+    def log_message(self, role: str, text: str, at: datetime) -> None:
+        self._exec("INSERT INTO messages(at, role, text) VALUES (?,?,?)", (at.isoformat(), role, text))
+
+    def recent_messages(self, limit: int) -> list[ChatMessage]:
+        rows = self._query("SELECT * FROM messages ORDER BY id DESC LIMIT ?", (limit,))
+        return [ChatMessage(at=datetime.fromisoformat(r["at"]), role=r["role"], text=r["text"])
+                for r in reversed(rows)]
+
+    def add_note(self, code: str | None, text: str, at: datetime) -> int:
+        cur = self._exec("INSERT INTO notes(at, code, text) VALUES (?,?,?)", (at.isoformat(), code, text))
+        assert cur.lastrowid is not None
+        return cur.lastrowid
+
+    def notes(self, code: str | None, include_inactive: bool = False) -> list[Note]:
+        where = "code IS NULL" if code is None else "code = ?"
+        args: tuple = () if code is None else (code,)
+        if not include_inactive:
+            where += " AND active = 1"
+        rows = self._query(f"SELECT * FROM notes WHERE {where} ORDER BY id", args)
+        return [Note(id=r["id"], at=datetime.fromisoformat(r["at"]), code=r["code"], text=r["text"],
+                     active=bool(r["active"])) for r in rows]
+
+    def set_note_active(self, note_id: int, active: bool) -> bool:
+        return self._exec("UPDATE notes SET active=? WHERE id=?", (int(active), note_id)).rowcount > 0
+
+    def count_chat_call(self, day: date) -> int:
+        with self._lock:
+            n = self.chat_calls_on(day) + 1
+            self.kv_set(f"chat_calls:{day.isoformat()}", str(n))
+            return n
+
+    def chat_calls_on(self, day: date) -> int:
+        return int(self.kv_get(f"chat_calls:{day.isoformat()}") or 0)

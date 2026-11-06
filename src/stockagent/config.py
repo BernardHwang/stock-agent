@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     max_candidates: int = 5
     max_runs_per_day: int = 6
 
+    chat_max_per_day: int = 1000  # counts chat model calls, a safety cap against runaway loops
+    chat_history: int = 20
+    deep_stale_days: int = 7
+    deep_move_pct: float = 0.08
+
     price_source: Literal["moomoo", "poll"] = "moomoo"
     poll_interval_s: int = 300
     tz: str = "Asia/Kuala_Lumpur"

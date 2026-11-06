@@ -94,3 +94,34 @@ def test_kv_and_news(store):
     assert not store.seen_news("n1")
     store.mark_news("n1")
     assert store.seen_news("n1")
+
+
+def test_recent_messages_window(store):
+    for i in range(25):
+        store.log_message("owner", f"m{i}", NOW + timedelta(seconds=i))
+    assert [m.text for m in store.recent_messages(20)] == [f"m{i}" for i in range(5, 25)]
+
+
+def test_notes_by_code_and_owner(store):
+    store.add_note("US.MDB", "wait 310-320", NOW)
+    store.add_note(None, "I don't short", NOW)
+    assert [n.text for n in store.notes("US.MDB")] == ["wait 310-320"]
+    assert [n.text for n in store.notes(None)] == ["I don't short"]
+
+
+def test_deactivate_and_restore_note(store):
+    nid = store.add_note("US.MDB", "wait 310-320", NOW)
+    assert store.set_note_active(nid, False) is True
+    assert store.notes("US.MDB") == []
+    assert len(store.notes("US.MDB", include_inactive=True)) == 1
+    store.set_note_active(nid, True)
+    assert len(store.notes("US.MDB")) == 1
+    assert store.set_note_active(999, False) is False
+
+
+def test_chat_call_counter_per_day(store):
+    a, b = NOW.date(), (NOW + timedelta(days=1)).date()
+    assert store.count_chat_call(a) == 1
+    assert store.count_chat_call(a) == 2
+    assert store.count_chat_call(b) == 1
+    assert store.chat_calls_on(a) == 2
