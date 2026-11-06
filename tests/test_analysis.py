@@ -259,3 +259,15 @@ def test_old_report_loads_without_price(store):
     store.kv_set("report:US.X", json.dumps({"at": "2026-11-01T00:00", "text": "t"}))
     saved = analysis.load_report(store, "US.X")
     assert saved.price is None and saved.text == "t"
+
+
+async def test_worker_calls_on_result(store):
+    store.enqueue("US.NVDA", "chat", 1, NOW)
+    w, sent = make(store)
+    calls = []
+
+    async def on_result(code, reason, text):
+        calls.append((code, reason, text))
+    w.on_result = on_result
+    await w.drain()
+    assert calls == [("US.NVDA", "chat", sent[-1])]

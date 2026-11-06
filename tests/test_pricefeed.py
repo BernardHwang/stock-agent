@@ -52,3 +52,11 @@ def test_moomoo_feed_subscribes():
     gw = FakeGw()
     MoomooFeed(gw).set_codes({"US.NVDA"})
     assert gw.codes == {"US.NVDA"}
+
+
+def test_index_moves_from_last_two_closes():
+    from stockagent.pricefeed import yf_index_moves
+
+    closes = {"SPY": [100.0, 98.0], "QQQ": [200.0], "DIA": []}
+    moves = yf_index_moves(history=lambda sym: closes[sym])
+    assert moves == {"SPY": -0.02}

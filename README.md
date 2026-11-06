@@ -26,14 +26,34 @@ You place every order yourself in the moomoo app.
 Analyses run one at a time from a priority queue: stop-loss/news re-reviews, then `/plan` requests and new
 holdings, then weekly reviews, then new candidates. `MAX_RUNS_PER_DAY` caps AI usage for the free tier.
 
+## Talk to it
+
+Just message the bot in plain words, e.g. *"I saw the market dropped, is it a good time to enter MDB, or should I
+buy more NVDA?"* It answers in seconds on the quick AI model: a verdict (Yes / Wait / No), the reason, and an
+entry or add range with take-profit and stop loss. It looks things up as it goes: live prices, your moomoo
+positions (portfolio weight is of stock holdings, cash excluded), plans, the latest deep analysis, news and the
+day's index moves. It can't trade.
+
+It offers a **Run full analysis (~5 min)** button when the quick answer rests on weak ground: the last deep
+analysis is older than `DEEP_STALE_DAYS` (7), the price moved more than `DEEP_MOVE_PCT` (8%) since, there's major
+news since, or the stock was never analysed. Ask "do a full analysis on MDB" to run one directly. When it
+finishes, the bot follows up and says whether its view changed.
+
+**Memory:** it remembers the last `CHAT_HISTORY` (20) messages, including alerts it sent, so you can reply
+"why?" to an alert. It keeps short dated notes per stock and about you ("I don't short", "max 20% per
+stock"). Ask "what do you remember about MDB?" or say "forget that"; forgotten notes can be restored.
+
+`CHAT_MAX_PER_DAY` (1000) is a safety cap on chat AI calls (each lookup round counts); you get a heads-up at 90%.
+It is separate from `MAX_RUNS_PER_DAY`, which still caps deep analyses.
+
 ## Telegram commands
 
 `/plan NVDA` · `/plan 0700.HK` · `/plan 0166.KL` · `/why MDB` · `/ask MDB why not sell everything?` · `/plans` ·
 `/holdings` · `/watch TICKER` · `/unwatch TICKER` · `/status` · `/help`. Only your `TELEGRAM_CHAT_ID` is answered.
 The commands are registered in Telegram's "/" menu each time the service starts.
 
-`/why` shows the reasoning from the latest saved analysis; `/ask` sends your question plus that analysis to the
-quick AI model (one short call, not counted against `MAX_RUNS_PER_DAY`).
+`/why` shows the reasoning from the latest saved analysis; `/ask MDB question` is the same as asking about MDB
+in plain words.
 
 ## Setup (local trial on Windows)
 

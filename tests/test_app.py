@@ -154,5 +154,28 @@ async def test_tick_errors_reported(app, monkeypatch):
     assert any("price_alerts" in m for m in app.sent)
 
 
-def test_ask_command_wired_to_ai(app):
-    assert app.commands.ask_fn == app.answer
+def test_chat_wired_into_commands(app):
+    assert app.commands.chat is app.chat
+    assert app.commands.queue_deep == app.queue_deep
+
+
+async def test_notify_logs_alert(app):
+    await app.notify("<b>TP</b> hit")
+    last = app.store.recent_messages(5)[-1]
+    assert last.role == "alert" and last.text == "TP hit"
+
+
+async def test_chat_analysis_follow_up(app):
+    async def follow_up(code, text):
+        return "View unchanged."
+    app.chat.follow_up = follow_up
+    await app.on_analysis_result("US.MDB", "chat", "plan text")
+    assert any("Update on US.MDB" in m and "View unchanged." in m for m in app.sent)
+    before = len(app.sent)
+    await app.on_analysis_result("US.MDB", "weekly", "plan text")
+    assert len(app.sent) == before
+
+
+async def test_queue_deep_uses_chat_reason(app):
+    assert await app.queue_deep("US.MDB") == 1
+    assert [(i.code, i.reason) for i in app.store.pending_items()] == [("US.MDB", "chat")]

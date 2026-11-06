@@ -103,3 +103,24 @@ def make_feed(price_source: str, gateway: Any, on_tick: TickFn, interval_s: int)
     if price_source == "moomoo":
         return MoomooFeed(gateway)
     return PollingFeed(on_tick, interval_s)
+
+
+INDEX_SYMBOLS = ("SPY", "QQQ", "DIA")
+
+
+def _daily_closes(symbol: str) -> list[float]:
+    return [float(x) for x in yf.Ticker(symbol).history(period="5d")["Close"].dropna()]
+
+
+def yf_index_moves(history: Callable[[str], list[float]] = _daily_closes) -> dict[str, float]:
+    """Day change (fraction) of the major US index ETFs, from the last two daily closes."""
+    out: dict[str, float] = {}
+    for sym in INDEX_SYMBOLS:
+        try:
+            closes = history(sym)
+        except Exception:
+            log.info("no history for %s", sym)
+            continue
+        if len(closes) >= 2 and closes[-2]:
+            out[sym] = round(closes[-1] / closes[-2] - 1, 4)
+    return out

@@ -1,7 +1,9 @@
 """Wires the components into one long-running asyncio service."""
 
 import asyncio
+import html
 import logging
+import re
 from collections.abc import Awaitable, Callable, Coroutine
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -11,8 +13,10 @@ from apscheduler.triggers.base import BaseTrigger
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
-from .analysis import AnalysisWorker, answer_question
-from .bot import PRIORITY_CANDIDATE, BotCommands, build_bot, send
+from .analysis import AnalysisWorker
+from .bot import PRIORITY_CANDIDATE, PRIORITY_PLAN_CMD, BotCommands, build_bot, send
+from .chat import ChatEngine
+from .chat_tools import ChatDeps, ChatToolbox
 from .config import Settings, load_screener_rules, load_universe
 from .health import Health
 from .holdings import sync_holdings
@@ -24,11 +28,11 @@ from .messages import (
     format_news_alert,
     format_weekly_summary,
 )
-from .models import Alert, PlanState, Position
+from .models import Alert, PlanState
 from .moomoo_gw import MoomooGateway
-from .news import poll_news
+from .news import poll_news, yf_news
 from .outcomes import update_outcomes
-from .pricefeed import PriceFeed, make_feed, yf_last_prices
+from .pricefeed import PriceFeed, make_feed, yf_index_moves, yf_last_prices
 from .rules import RuleEngine
 from .screener import screen, yf_fetch
 from .store import Store
@@ -38,6 +42,7 @@ log = logging.getLogger(__name__)
 PRIORITY_URGENT = 0
 PRIORITY_REVIEW = 2
 LEVEL_KINDS = {"entry", "partial_tp", "tp", "sl", "expired"}
+_TAG_RE = re.compile(r"<[^>]+>")
 
 
 def _utcnow() -> datetime:
@@ -59,11 +64,12 @@ class App:
         self._sender = sender
         self._tasks: set[asyncio.Task] = set()
         self.worker = AnalysisWorker(settings, self.store, self.health, self.notify, now=now,
-                                     price_fn=self.current_price)
-        self.commands = BotCommands(settings.telegram_chat_id, self.store, self.status, self.kick_queue, now=now)
-
-    async def answer(self, code: str, question: str, report: str, at: str, held: Position | None) -> str:
-        return await asyncio.to_thread(answer_question, code, question, report, at, held, self.settings)
+                                     price_fn=self.current_price, on_result=self.on_analysis_result)
+        deps = ChatDeps(prices=self.prices, news=yf_news, market=yf_index_moves, sync_positions=self.holdings_sync,
+                        queue_deep=self.queue_deep)
+        self.chat = ChatEngine(settings, self.store, ChatToolbox(settings, self.store, deps, now), now=now)
+        self.commands = BotCommands(settings.telegram_chat_id, self.store, self.status, self.kick_queue, now=now,
+                                    chat=self.chat, queue_deep=self.queue_deep)
 
     # messaging
     async def notify(self, text: str) -> None:
@@ -74,6 +80,30 @@ class App:
             await self._sender(text)
         except Exception:
             log.exception("failed to send Telegram message")
+            return
+        # Alerts join the chat history so the owner can reply "why?" to them.
+        self.store.log_message("alert", html.unescape(_TAG_RE.sub("", text)), self.now())
+
+    # chat
+    def prices(self, codes: list[str]) -> dict[str, float]:
+        """Blocking; live prices from moomoo, falling back to yfinance."""
+        try:
+            return self.gateway.snapshot(codes)
+        except Exception:
+            return yf_last_prices(codes)
+
+    async def queue_deep(self, code: str) -> int:
+        self.store.enqueue(code, "chat", PRIORITY_PLAN_CMD, self.now())
+        position = next((i for i, it in enumerate(self.store.pending_items(), 1) if it.code == code), 1)
+        await self.kick_queue()
+        return position
+
+    async def on_analysis_result(self, code: str, reason: str, text: str) -> None:
+        if reason != "chat":
+            return
+        note = await self.chat.follow_up(code, text)
+        if note:
+            await self.notify(format_info(f"Update on {html.escape(code)}: {html.escape(note)}"))
 
     async def handle_alerts(self, alerts: list[Alert]) -> None:
         now = self.now()

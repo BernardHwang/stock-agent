@@ -91,18 +91,6 @@ def extract_plan(report: str, code: str, held: Position | None, settings: Settin
     return result if isinstance(result, PlanFields) else PlanFields.model_validate(result)
 
 
-ASK_PROMPT = """An investor is asking a follow-up question about your earlier analysis of {code}.
-Answer only from the analysis below. If it does not cover the question, say so plainly.
-The investor is long-only and holds for 3-12 months. {held}
-Reply in plain English, at most 1200 characters, no markdown headings.
-
-Analysis (from {at} UTC):
-{report}
-
-Question: {question}
-"""
-
-
 class SavedReport(BaseModel):
     at: datetime
     text: str
@@ -117,20 +105,6 @@ def save_report(store: Store, code: str, report: str, at: datetime, price: float
 def load_report(store: Store, code: str) -> SavedReport | None:
     raw = store.kv_get(f"report:{code}")
     return SavedReport.model_validate_json(raw) if raw else None
-
-
-def answer_question(code: str, question: str, report: str, at: str, held: Position | None,
-                    settings: Settings) -> str:
-    from langchain.chat_models import init_chat_model
-
-    llm = init_chat_model(settings.quick_model, model_provider=langchain_provider(settings.llm_provider))
-    held_line = (f"They hold {held.qty:g} shares at average cost {held.avg_cost:.2f}." if held
-                 else "They do not hold this stock.")
-    reply = llm.invoke(ASK_PROMPT.format(code=code, held=held_line, at=at, report=report, question=question))
-    content = reply.content
-    if isinstance(content, list):  # some providers return content blocks
-        content = "".join(b.get("text", "") if isinstance(b, dict) else str(b) for b in content)
-    return str(content).strip()
 
 
 def report_section(report: str, title: str) -> str | None:
@@ -158,9 +132,11 @@ class AnalysisWorker:
     def __init__(self, settings: Settings, store: Store, health: Health, notify: Callable[[str], Awaitable[None]],
                  run: RunFn = run_tradingagents, extract: ExtractFn = extract_plan,
                  now: Callable[[], datetime] = _utcnow,
-                 price_fn: Callable[[str], float | None] | None = None):
+                 price_fn: Callable[[str], float | None] | None = None,
+                 on_result: Callable[[str, str, str], Awaitable[None]] | None = None):
         self.settings, self.store, self.health, self.notify = settings, store, health, notify
         self.run, self.extract, self.now, self.price_fn = run, extract, now, price_fn
+        self.on_result = on_result  # (code, queue reason, message sent) after a plan or no-plan message
         self._lock = asyncio.Lock()
 
     async def drain(self) -> None:
@@ -213,6 +189,11 @@ class AnalysisWorker:
             return True
         text = format_plan(plan, now, self.settings.tz) if plan.id else format_no_plan(code, fields)
         await self.notify(text)
+        if self.on_result is not None:
+            try:
+                await self.on_result(code, reason, text)
+            except Exception:
+                log.exception("on_result failed for %s", code)
         return True
 
     async def _price(self, code: str) -> float | None:
