@@ -60,8 +60,7 @@ class App:
         self._tasks: set[asyncio.Task] = set()
         self.worker = AnalysisWorker(settings, self.store, self.health, self.notify, now=now,
                                      price_fn=self.current_price)
-        self.commands = BotCommands(settings.telegram_chat_id, self.store, self.status, self.kick_queue, now=now,
-                                    ask_fn=self.answer)
+        self.commands = BotCommands(settings.telegram_chat_id, self.store, self.status, self.kick_queue, now=now)
 
     async def answer(self, code: str, question: str, report: str, at: str, held: Position | None) -> str:
         return await asyncio.to_thread(answer_question, code, question, report, at, held, self.settings)

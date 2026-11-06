@@ -4,19 +4,17 @@ from datetime import UTC, datetime
 from html import escape
 from typing import Any
 
-from telegram import BotCommand
-from telegram.constants import ParseMode
-from telegram.ext import Application, ApplicationBuilder, CommandHandler, filters
+from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.constants import ChatAction, ParseMode
+from telegram.ext import Application, ApplicationBuilder, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
-from .analysis import is_rate_limit, load_report, report_section
+from .analysis import load_report, report_section
+from .chat import ChatEngine, ChatReply
 from .messages import FOOTER, chunk_text, format_plan_list, format_status
-from .models import Position
 from .store import Store
 from .symbols import normalize_ticker
 
 __all__ = ["BotCommands", "build_bot", "normalize_ticker", "send"]
-
-AskFn = Callable[[str, str, str, str, Position | None], Awaitable[str]]
 
 PRIORITY_PLAN_CMD = 1
 PRIORITY_CANDIDATE = 3
@@ -26,7 +24,7 @@ PRIORITY_CANDIDATE = 3
 BOT_COMMANDS = [
     ("plan", "Analyse a stock now, e.g. /plan NVDA"),
     ("why", "Why the agent said what it said, e.g. /why MDB"),
-    ("ask", "Ask about a stock's analysis, e.g. /ask MDB why not sell?"),
+    ("ask", "Ask about a stock, e.g. /ask MDB why not sell?"),
     ("plans", "Active plans"),
     ("holdings", "Your moomoo positions and their levels"),
     ("watch", "Add a ticker to the weekly analysis"),
@@ -35,10 +33,13 @@ BOT_COMMANDS = [
     ("help", "List commands"),
 ]
 
-HELP = """<b>Commands</b>
+HELP = """Just message me in plain words, e.g. 'market dropped, good time to add MDB?'
+Reply to any alert to ask about it.
+
+<b>Commands</b>
 /plan TICKER: analyse a stock now (e.g. /plan NVDA, /plan 0700.HK, /plan 0166.KL)
 /why TICKER: the reasoning behind the latest analysis
-/ask TICKER question: ask about the latest analysis (e.g. /ask MDB why not sell everything?)
+/ask TICKER question: ask about a stock (e.g. /ask MDB why not sell everything?)
 /plans: active plans
 /holdings: your moomoo positions and their levels
 /watch TICKER, /unwatch TICKER: extra tickers for the weekly analysis
@@ -49,18 +50,59 @@ class BotCommands:
     def __init__(self, owner_chat_id: int, store: Store, status_fn: Callable[[], dict],
                  kick_queue: Callable[[], Awaitable[None]],
                  now: Callable[[], datetime] = lambda: datetime.now(UTC).replace(tzinfo=None),
-                 ask_fn: AskFn | None = None):
+                 chat: ChatEngine | None = None, queue_deep: Callable[[str], Awaitable[int]] | None = None):
         self.owner, self.store, self.status_fn, self.kick_queue, self.now = (
             owner_chat_id, store, status_fn, kick_queue, now)
-        self.ask_fn = ask_fn
+        self.chat, self.queue_deep = chat, queue_deep
 
     def _is_owner(self, update: Any) -> bool:
-        return update.effective_chat is not None and update.effective_chat.id == self.owner
+        if update.effective_chat is None or update.effective_chat.id != self.owner:
+            return False
+        user = getattr(update, "effective_user", None)
+        return user is None or user.id == self.owner
 
     @staticmethod
-    async def _reply(update: Any, text: str) -> None:
-        for chunk in chunk_text(text):
-            await update.message.reply_text(chunk, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+    async def _reply(update: Any, text: str, reply_markup: Any = None) -> None:
+        chunks = chunk_text(text)
+        for i, chunk in enumerate(chunks):
+            await update.message.reply_text(chunk, parse_mode=ParseMode.HTML, disable_web_page_preview=True,
+                                            reply_markup=reply_markup if i == len(chunks) - 1 else None)
+
+    async def _chat(self, update: Any, context: Any, text: str, quoted: str | None = None) -> None:
+        if self.chat is None:
+            await self._reply(update, "Chat is not available right now.")
+            return
+        bot = getattr(context, "bot", None)
+        if bot is not None:
+            try:
+                await bot.send_chat_action(chat_id=self.owner, action=ChatAction.TYPING)
+            except Exception:
+                pass  # cosmetic only
+        result: ChatReply = await self.chat.reply(text, quoted)
+        markup = None
+        if result.offer_deep:
+            markup = InlineKeyboardMarkup([[InlineKeyboardButton(f"Run full analysis on {code} (~5 min)",
+                                                                 callback_data=f"deep:{code}")]
+                                           for code in result.offer_deep])
+        await self._reply(update, f"{escape(result.text)}\n\n{FOOTER}", reply_markup=markup)
+
+    async def text(self, update: Any, context: Any) -> None:
+        if not self._is_owner(update) or update.message is None or not update.message.text:
+            return
+        quoted = update.message.reply_to_message.text if update.message.reply_to_message else None
+        await self._chat(update, context, update.message.text, quoted)
+
+    async def button(self, update: Any, context: Any) -> None:
+        query = update.callback_query
+        if query is None or query.from_user is None or query.from_user.id != self.owner:
+            return
+        code = (query.data or "").removeprefix("deep:")
+        await query.answer()
+        if normalize_ticker(code) != code or self.queue_deep is None:
+            return
+        position = await self.queue_deep(code)
+        await query.message.reply_text(f"Queued {escape(code)} (#{position} in line). I'll follow up here when "
+                                       "it's done.", parse_mode=ParseMode.HTML)
 
     async def _ticker_arg(self, update: Any, context: Any, usage: str) -> str | None:
         if not context.args:
@@ -123,22 +165,7 @@ class BotCommands:
         code = await self._ticker_arg(update, context, "/ask TICKER question")
         if code is None:
             return
-        saved = load_report(self.store, code)
-        if saved is None or self.ask_fn is None:
-            await self._reply(update, self._no_report(context))
-            return
-        question = " ".join(context.args[1:])
-        held = next((p for p in self.store.last_positions() if p.code == code), None)
-        await self._reply(update, "Thinking…")
-        try:
-            answer = await self.ask_fn(code, question, saved.text, saved.at.isoformat(timespec="minutes"), held)
-        except Exception as exc:
-            if is_rate_limit(exc):
-                await self._reply(update, "AI quota reached for now. Try again later.")
-            else:
-                await self._reply(update, f"Couldn't answer that ({type(exc).__name__}).")
-            return
-        await self._reply(update, f"<b>{escape(code)}</b>\n{escape(answer)}\n\n{FOOTER}")
+        await self._chat(update, context, f"About {code}: {' '.join(context.args[1:])}")
 
     async def watch(self, update: Any, context: Any) -> None:
         if not self._is_owner(update):
@@ -193,10 +220,12 @@ async def register_commands(app: Any) -> None:
 
 def build_bot(token: str, commands: BotCommands) -> Application:
     app = ApplicationBuilder().token(token).post_init(register_commands).build()
-    owner_only = filters.Chat(chat_id=commands.owner)
+    owner_only = filters.Chat(chat_id=commands.owner) & filters.User(user_id=commands.owner)
     for name, _ in BOT_COMMANDS:
         app.add_handler(CommandHandler(name, getattr(commands, name), filters=owner_only))
     app.add_handler(CommandHandler("start", commands.help, filters=owner_only))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & owner_only, commands.text))
+    app.add_handler(CallbackQueryHandler(commands.button, pattern=r"^deep:"))
     return app
 
 

@@ -4,6 +4,8 @@ from types import SimpleNamespace
 import pytest
 
 from stockagent.bot import BotCommands, normalize_ticker
+from stockagent.chat import ChatReply
+from stockagent.messages import FOOTER
 from stockagent.models import Position
 from stockagent.store import Store
 
@@ -19,15 +21,31 @@ def store(tmp_path):
 
 
 class Msg:
-    def __init__(self):
+    def __init__(self, text=None, quoted=None):
         self.replies = []
+        self.markups = []
+        self.text = text
+        self.reply_to_message = SimpleNamespace(text=quoted) if quoted else None
 
-    async def reply_text(self, text, **kw):
+    async def reply_text(self, text, reply_markup=None, **kw):
         self.replies.append(text)
+        self.markups.append(reply_markup)
 
 
-def upd(chat=OWNER):
-    return SimpleNamespace(effective_chat=SimpleNamespace(id=chat), message=Msg())
+def upd(chat=OWNER, user=OWNER, text=None, quoted=None):
+    return SimpleNamespace(effective_chat=SimpleNamespace(id=chat), effective_user=SimpleNamespace(id=user),
+                           message=Msg(text, quoted))
+
+
+def cb_upd(data, user=OWNER):
+    answered = []
+
+    async def answer(*a, **kw):
+        answered.append(True)
+
+    q = SimpleNamespace(data=data, from_user=SimpleNamespace(id=user), message=Msg(), answer=answer)
+    return SimpleNamespace(effective_chat=SimpleNamespace(id=OWNER), effective_user=SimpleNamespace(id=user),
+                           callback_query=q, message=None)
 
 
 def ctx(*args):
@@ -101,17 +119,27 @@ async def test_holdings_lists_positions(store):
     assert "US.NVDA" in u.message.replies[0] and "no plan yet" in u.message.replies[0]
 
 
-def cmds_with_ask(store, answer="Because momentum is weak.", error=None):
-    calls = []
+class FakeChat:
+    def __init__(self, reply=None):
+        self.calls = []
+        self.result = reply or ChatReply("Wait for 310-320.")
 
-    async def ask_fn(code, question, report, at, held):
-        calls.append((code, question, report, at, held))
-        if error:
-            raise error
-        return answer
+    async def reply(self, text, quoted=None):
+        self.calls.append((text, quoted))
+        return self.result
 
-    c = BotCommands(OWNER, store, status_fn=lambda: {}, kick_queue=_kick, now=lambda: NOW, ask_fn=ask_fn)
-    return c, calls
+
+def cmds_with_chat(store, reply=None):
+    chat = FakeChat(reply)
+    queued = []
+
+    async def queue_deep(code):
+        queued.append(code)
+        return 2
+
+    c = BotCommands(OWNER, store, status_fn=lambda: {}, kick_queue=_kick, now=lambda: NOW, chat=chat,
+                    queue_deep=queue_deep)
+    return c, chat, queued
 
 
 async def _kick():
@@ -137,41 +165,66 @@ async def test_why_without_analysis_suggests_plan(store):
     assert "/plan MDB" in u.message.replies[0]
 
 
-async def test_ask_passes_report_question_and_position(store):
-    _save(store)
-    store.save_positions([Position(code="US.MDB", qty=7, avg_cost=358.09)], NOW)
-    c, calls = cmds_with_ask(store)
+async def test_text_routes_to_chat_with_quote(store):
+    c, chat, _ = cmds_with_chat(store)
+    u = upd(text="why?", quoted="SL hit")
+    await c.text(u, ctx())
+    assert chat.calls == [("why?", "SL hit")]
+    assert u.message.replies[-1].endswith(FOOTER) and "Wait for 310-320." in u.message.replies[-1]
+
+
+async def test_text_from_other_user_in_owner_chat_ignored(store):
+    c, chat, _ = cmds_with_chat(store)
+    u = upd(text="hi", user=7)
+    await c.text(u, ctx())
+    assert chat.calls == [] and u.message.replies == []
+
+
+async def test_reply_escaped_and_chunked(store):
+    c, _, _ = cmds_with_chat(store, ChatReply("<b>" + "x" * 5000))
+    u = upd(text="hi")
+    await c.text(u, ctx())
+    assert all(len(r) <= 4096 for r in u.message.replies)
+    assert u.message.replies[0].startswith("&lt;b&gt;")
+
+
+async def test_offer_adds_button(store):
+    c, _, _ = cmds_with_chat(store, ChatReply("Wait.", ["US.MDB"]))
+    u = upd(text="add MDB?")
+    await c.text(u, ctx())
+    markup = u.message.markups[-1]
+    assert markup.inline_keyboard[0][0].callback_data == "deep:US.MDB"
+    assert all(m is None for m in u.message.markups[:-1])
+
+
+async def test_button_queues_deep(store):
+    c, _, queued = cmds_with_chat(store)
+    u = cb_upd("deep:US.MDB")
+    await c.button(u, ctx())
+    assert queued == ["US.MDB"] and "#2 in line" in u.callback_query.message.replies[-1]
+    await c.button(cb_upd("deep:$$$"), ctx())
+    await c.button(cb_upd("deep:US.MDB", user=7), ctx())
+    assert queued == ["US.MDB"]
+
+
+async def test_ask_uses_chat(store):
+    c, chat, _ = cmds_with_chat(store)
     u = upd()
-    await c.ask(u, ctx("MDB", "why", "not", "sell", "everything?"))
-    code, question, report, at, held = calls[0]
-    assert code == "US.MDB" and question == "why not sell everything?" and "Underweight" in report
-    assert held.qty == 7
-    assert "Because momentum is weak." in u.message.replies[-1]
+    await c.ask(u, ctx("MDB", "why", "not", "sell?"))
+    assert chat.calls[0][0] == "About US.MDB: why not sell?"
 
 
-async def test_ask_usage_and_missing_report(store):
-    c, calls = cmds_with_ask(store)
+async def test_ask_usage(store):
+    c, chat, _ = cmds_with_chat(store)
     u = upd()
     await c.ask(u, ctx("MDB"))
-    assert "Usage" in u.message.replies[0]
-    u = upd()
-    await c.ask(u, ctx("MDB", "why?"))
-    assert "/plan MDB" in u.message.replies[0] and calls == []
-
-
-async def test_ask_quota_error_is_friendly(store):
-    _save(store)
-    c, _ = cmds_with_ask(store, error=RuntimeError("429 RESOURCE_EXHAUSTED"))
-    u = upd()
-    await c.ask(u, ctx("MDB", "why?"))
-    assert "quota" in u.message.replies[-1].lower()
+    assert "Usage" in u.message.replies[0] and chat.calls == []
 
 
 async def test_ask_ignored_for_non_owner(store):
-    _save(store)
-    c, calls = cmds_with_ask(store)
+    c, chat, _ = cmds_with_chat(store)
     await c.ask(upd(chat=999), ctx("MDB", "why?"))
-    assert calls == []
+    assert chat.calls == []
 
 
 async def test_commands_registered_in_telegram_menu():
