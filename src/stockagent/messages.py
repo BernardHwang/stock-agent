@@ -64,6 +64,11 @@ def format_plan(plan: Plan, now: datetime, tz: str) -> str:
     return "\n".join(parts)
 
 
+def format_no_plan(code: str, f: PlanFields) -> str:
+    return (f"{_ACTION_ICON[f.action]} <b>{escape(code)}: no buy plan right now</b> "
+            f"(analysis says {f.action.value}, confidence {f.confidence})\n\n{escape(f.reasoning)}\n{FOOTER}")
+
+
 def format_level_alert(alert: Alert, plan: Plan, now: datetime, tz: str) -> str:
     title = _LEVEL_TITLE.get(alert.kind, alert.kind)
     price = f" at {alert.price:.2f}" if alert.price is not None else ""
