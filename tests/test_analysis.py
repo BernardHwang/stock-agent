@@ -166,3 +166,47 @@ async def test_failure_after_extraction_does_not_leave_item_running(store, monke
     await w.drain()
     assert store.pending_count() == 0 and not any(i.status == "running" for i in store.pending_items())
     assert "failed" in sent[0]
+
+
+@pytest.mark.parametrize("name,expected", [("google", "google_genai"), ("openai", "openai"),
+                                           ("anthropic", "anthropic"), ("OpenAI", "openai")])
+def test_langchain_provider_mapping(name, expected):
+    assert analysis.langchain_provider(name) == expected
+
+
+def test_extractor_uses_configured_provider(monkeypatch):
+    import langchain.chat_models as cm
+
+    captured = {}
+
+    class FakeLLM:
+        def with_structured_output(self, schema):
+            return self
+
+        def invoke(self, prompt):
+            return buy()
+
+    def fake_init(model, model_provider):
+        captured.update(model=model, provider=model_provider)
+        return FakeLLM()
+
+    monkeypatch.setattr(cm, "init_chat_model", fake_init)
+    s = settings(llm_provider="openai", deep_model="gpt-6-sol", quick_model="gpt-6-luna")
+    assert analysis.extract_plan("report", "US.NVDA", None, s).action == "BUY"
+    assert captured == {"model": "gpt-6-sol", "provider": "openai"}
+
+
+def test_openai_config_passed_to_tradingagents(monkeypatch):
+    captured = {}
+
+    class FakeGraph:
+        def __init__(self, selected_analysts, debug, config):
+            captured.update(config)
+
+        def propagate(self, symbol, day):
+            return {"final_trade_decision": "HOLD"}, "Hold"
+
+    monkeypatch.setattr(analysis, "TradingAgentsGraph", FakeGraph)
+    analysis.run_tradingagents("NVDA", "2026-11-06", settings(llm_provider="openai", deep_model="gpt-6-sol",
+                                                              quick_model="gpt-6-luna"))
+    assert captured["llm_provider"] == "openai" and captured["quick_think_llm"] == "gpt-6-luna"

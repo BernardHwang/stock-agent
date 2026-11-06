@@ -35,7 +35,8 @@ holdings, then weekly reviews, then new candidates. `MAX_RUNS_PER_DAY` caps AI u
 
 1. Install [uv](https://docs.astral.sh/uv/), then `uv sync`.
 2. Telegram: create a bot with @BotFather (token) and get your chat id (e.g. message @userinfobot).
-3. Gemini: create a free API key at aistudio.google.com.
+3. AI provider (one of): Gemini (free key at aistudio.google.com), OpenAI (platform.openai.com) or Anthropic
+   (console.anthropic.com). See the three blocks in `.env.example`; switching later is just those lines.
 4. `copy .env.example .env` and fill it in.
 5. Install moomoo OpenD for Windows, log in, keep it running.
 6. Check what your account can do through the API:

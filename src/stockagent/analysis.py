@@ -72,10 +72,14 @@ def run_tradingagents(symbol: str, day: str, settings: Settings) -> str:
                        if state.get(key))
 
 
+def langchain_provider(name: str) -> str:
+    return _LC_PROVIDER.get(name.lower(), name.lower())
+
+
 def extract_plan(report: str, code: str, held: Position | None, settings: Settings) -> PlanFields:
     from langchain.chat_models import init_chat_model
 
-    provider = _LC_PROVIDER.get(settings.llm_provider, settings.llm_provider)
+    provider = langchain_provider(settings.llm_provider)
     llm = init_chat_model(settings.deep_model, model_provider=provider).with_structured_output(PlanFields)
     held_line = (f"The investor HOLDS {held.qty:g} shares at average cost {held.avg_cost:.2f}." if held
                  else "The investor does not hold this stock.")

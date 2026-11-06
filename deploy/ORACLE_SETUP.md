@@ -71,7 +71,16 @@ Update later: `git pull && docker compose -f deploy/docker-compose.yml up -d --b
 
 ## 5. Switching to a paid AI model
 
-In `.env` (example for Claude):
+In `.env`, replace the model block. Example for OpenAI:
+
+```
+LLM_PROVIDER=openai
+DEEP_MODEL=gpt-6-sol
+QUICK_MODEL=gpt-6-luna
+OPENAI_API_KEY=...
+```
+
+Example for Claude:
 
 ```
 LLM_PROVIDER=anthropic
@@ -83,6 +92,8 @@ MAX_RISK_DISCUSS_ROUNDS=2
 MAX_CANDIDATES=10
 MAX_RUNS_PER_DAY=20
 ```
+
+Raise the `MAX_*` limits like this for any paid provider.
 
 Then set a monthly spending cap in the provider's console and restart:
 `docker compose -f deploy/docker-compose.yml up -d`.
