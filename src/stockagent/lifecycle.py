@@ -6,8 +6,13 @@ from .store import Store
 PLAN_TTL = timedelta(days=60)
 
 
-def apply_new_analysis(store: Store, code: str, fields: PlanFields, source: str, now: datetime) -> Plan:
-    """Fold a fresh analysis into the ticker's plan. Returns a plan with ``id=None`` when nothing was saved."""
+def apply_new_analysis(store: Store, code: str, fields: PlanFields, source: str, now: datetime,
+                       held: bool = False) -> Plan:
+    """Fold a fresh analysis into the ticker's plan. Returns a plan with ``id=None`` when nothing was saved.
+
+    ``held`` means the owner owns the stock but it has no HELD plan yet (bought before the service started,
+    or without a plan); the analysis then becomes that holding's plan.
+    """
     active = store.active_plan(code)
 
     if active is not None and active.state == PlanState.HELD:
@@ -23,6 +28,13 @@ def apply_new_analysis(store: Store, code: str, fields: PlanFields, source: str,
     if active is not None:
         active.state = PlanState.EXPIRED
         store.update_plan(active)
+
+    if held:
+        if fields.action == Action.BUY:
+            fields = fields.model_copy(update={"action": Action.HOLD})
+        plan = Plan(code=code, fields=fields, state=PlanState.HELD, created_at=now, source=source)
+        store.save_plan(plan)
+        return plan
 
     plan = Plan(code=code, fields=fields, state=PlanState.OPEN, created_at=now, source=source)
     if fields.action == Action.BUY:

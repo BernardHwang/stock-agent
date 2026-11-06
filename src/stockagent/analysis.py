@@ -146,7 +146,7 @@ class AnalysisWorker:
             await self.notify(format_invalid_plan(code, errors))
             return True
 
-        plan = apply_new_analysis(self.store, code, fields, reason, now)
+        plan = apply_new_analysis(self.store, code, fields, reason, now, held=held is not None)
         self.store.finish_queue_item(item_id, "done")
         text = format_plan(plan, now, self.settings.tz) if plan.id else format_no_plan(code, fields)
         await self.notify(text)
