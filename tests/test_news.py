@@ -49,3 +49,11 @@ def test_first_poll_for_a_stock_only_marks_existing_headlines(store):
     assert poll_news(store, ["US.NVDA"], items.get) == []
     items["US.NVDA"].append({"id": "2", "title": "Nvidia cuts guidance", "link": "u"})
     assert [i["id"] for _, i in poll_news(store, ["US.NVDA"], items.get)] == ["2"]
+
+
+def test_parse_keeps_publish_time():
+    raw = [{"id": "1", "content": {"title": "MDB misses earnings", "pubDate": "2026-11-05T10:00:00Z"}},
+           {"id": "2", "title": "Old style", "providerPublishTime": 1793872800}]
+    items = parse_yf_news(raw)
+    assert items[0]["published"].startswith("2026-11-05T10:00")
+    assert items[1]["published"].startswith("2026-")

@@ -9,6 +9,8 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
+from pydantic import BaseModel
+
 from .config import Settings
 from .health import Health
 from .lifecycle import apply_new_analysis
@@ -100,17 +102,20 @@ Question: {question}
 """
 
 
-def save_report(store: Store, code: str, report: str, at: datetime) -> None:
-    store.kv_set(f"report:{code}", json.dumps({"at": at.isoformat(timespec="minutes"), "text": report}))
+class SavedReport(BaseModel):
+    at: datetime
+    text: str
+    price: float | None = None  # price when the analysis ran; None for reports saved before it was recorded
 
 
-def load_report(store: Store, code: str) -> tuple[str, str] | None:
-    """Latest saved analysis as (timestamp, text), or None."""
+def save_report(store: Store, code: str, report: str, at: datetime, price: float | None = None) -> None:
+    store.kv_set(f"report:{code}", json.dumps({"at": at.isoformat(timespec="minutes"), "text": report,
+                                               "price": price}))
+
+
+def load_report(store: Store, code: str) -> SavedReport | None:
     raw = store.kv_get(f"report:{code}")
-    if not raw:
-        return None
-    data = json.loads(raw)
-    return data["at"], data["text"]
+    return SavedReport.model_validate_json(raw) if raw else None
 
 
 def answer_question(code: str, question: str, report: str, at: str, held: Position | None,
@@ -183,9 +188,10 @@ class AnalysisWorker:
 
         if self.health.resolved("ai_quota"):
             await self.notify(format_info("AI quota available again."))
-        save_report(self.store, code, report, now)
+        price = await self._price(code)
+        save_report(self.store, code, report, now, price)
         try:
-            errors = validate_fields(fields) or validate_against_price(fields, await self._price(code))
+            errors = validate_fields(fields) or validate_against_price(fields, price)
             if errors:
                 log.warning("invalid plan for %s: %s", code, errors)
                 self.store.finish_queue_item(item_id, "done")

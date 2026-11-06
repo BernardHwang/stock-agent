@@ -3,6 +3,7 @@
 import logging
 import re
 from collections.abc import Callable
+from datetime import UTC, datetime
 
 import yfinance as yf
 
@@ -26,6 +27,22 @@ def is_major(title: str) -> bool:
     return bool(_MAJOR_RE.search(title))
 
 
+def _published(value: object) -> str | None:
+    """Naive-UTC ISO timestamp from an ISO string or epoch seconds."""
+    try:
+        if isinstance(value, (int, float)):
+            dt = datetime.fromtimestamp(value, UTC)
+        elif isinstance(value, str) and value:
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        else:
+            return None
+    except (ValueError, OverflowError, OSError):
+        return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(UTC).replace(tzinfo=None)
+    return dt.isoformat()
+
+
 def parse_yf_news(raw: list[dict]) -> list[NewsItem]:
     out = []
     for r in raw:
@@ -35,7 +52,11 @@ def parse_yf_news(raw: list[dict]) -> list[NewsItem]:
         link = (c.get("canonicalUrl") or {}).get("url") or (c.get("clickThroughUrl") or {}).get("url") \
             or r.get("link") or ""
         if news_id and title:
-            out.append({"id": str(news_id), "title": str(title), "link": str(link)})
+            item = {"id": str(news_id), "title": str(title), "link": str(link)}
+            published = _published(c.get("pubDate") or r.get("providerPublishTime"))
+            if published:
+                item["published"] = published
+            out.append(item)
     return out
 
 

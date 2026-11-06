@@ -237,5 +237,25 @@ async def test_worker_saves_report_for_follow_up_questions(store):
     store.enqueue("US.NVDA", "weekly", 3, NOW)
     w, _ = make(store)
     await w.drain()
-    at, text = analysis.load_report(store, "US.NVDA")
-    assert text == "report for NVDA" and at.startswith("2026-11-06")
+    saved = analysis.load_report(store, "US.NVDA")
+    assert saved.text == "report for NVDA" and saved.at == NOW and saved.price is None
+
+
+async def test_worker_saves_price_with_report(store):
+    store.enqueue("US.NVDA", "weekly", 3, NOW)
+    w, _ = make(store)
+    w.price_fn = lambda code: 150.0
+    await w.drain()
+    assert analysis.load_report(store, "US.NVDA").price == 150.0
+
+
+def test_report_roundtrip_with_price(store):
+    analysis.save_report(store, "US.X", "t", NOW, price=123.4)
+    assert analysis.load_report(store, "US.X").price == 123.4
+
+
+def test_old_report_loads_without_price(store):
+    import json
+    store.kv_set("report:US.X", json.dumps({"at": "2026-11-01T00:00", "text": "t"}))
+    saved = analysis.load_report(store, "US.X")
+    assert saved.price is None and saved.text == "t"

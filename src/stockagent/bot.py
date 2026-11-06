@@ -120,7 +120,7 @@ class BotCommands:
         if saved is None:
             await self._reply(update, self._no_report(context))
             return
-        at, report = saved
+        at, report = saved.at.isoformat(timespec="minutes"), saved.text
         plan = self.store.active_plan(code)
         parts = [f"<b>Why: {escape(code)}</b> (analysis from {escape(at)} UTC)"]
         if plan:
@@ -146,7 +146,7 @@ class BotCommands:
         held = next((p for p in self.store.last_positions() if p.code == code), None)
         await self._reply(update, "Thinking…")
         try:
-            answer = await self.ask_fn(code, question, saved[1], saved[0], held)
+            answer = await self.ask_fn(code, question, saved.text, saved.at.isoformat(timespec="minutes"), held)
         except Exception as exc:
             if is_rate_limit(exc):
                 await self._reply(update, "AI quota reached for now. Try again later.")
