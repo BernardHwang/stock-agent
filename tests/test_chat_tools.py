@@ -129,3 +129,13 @@ async def test_news_and_market(store):
 def test_tool_names_are_methods():
     assert all(callable(getattr(ChatToolbox, n)) for n in TOOL_NAMES)
     assert "place_order" not in TOOL_NAMES
+
+
+async def test_queue_reports_already_running(store):
+    f = Fakes()
+
+    async def running(code):
+        return 0
+    f.queue = running
+    out = await call(toolbox(store, f), "queue_deep_analysis", ticker="MDB")
+    assert out["already_running"] is True

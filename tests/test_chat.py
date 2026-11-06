@@ -171,3 +171,11 @@ async def test_follow_up_over_cap_returns_none(store):
     eng, llm = engine(store, [AIMessage("x")], chat_max_per_day=1)
     store.count_chat_call(NOW.date())
     assert await eng.follow_up("US.MDB", "plan") is None and llm.calls == []
+
+
+async def test_history_never_starts_with_bot_turn(store):
+    store.log_message("bot", "earlier answer", NOW)
+    store.log_message("owner", "earlier question", NOW)
+    eng, llm = engine(store, [AIMessage("ok")])
+    await eng.reply("now")
+    assert isinstance(llm.calls[0][1], HumanMessage)

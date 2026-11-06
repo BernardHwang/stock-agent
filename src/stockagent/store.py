@@ -158,6 +158,9 @@ class Store:
             assert cur.lastrowid is not None
             return cur.lastrowid
 
+    def is_running(self, code: str) -> bool:
+        return bool(self._query("SELECT 1 FROM queue WHERE code=? AND status='running'", (code,)))
+
     def next_queue_item(self) -> QueueItem | None:
         with self._lock:
             rows = self._query("SELECT * FROM queue WHERE status='pending' ORDER BY priority, id LIMIT 1")

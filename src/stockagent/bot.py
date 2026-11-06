@@ -101,8 +101,9 @@ class BotCommands:
         if normalize_ticker(code) != code or self.queue_deep is None:
             return
         position = await self.queue_deep(code)
-        await query.message.reply_text(f"Queued {escape(code)} (#{position} in line). I'll follow up here when "
-                                       "it's done.", parse_mode=ParseMode.HTML)
+        status = f"Already analysing {escape(code)}." if position == 0 else \
+            f"Queued {escape(code)} (#{position} in line)."
+        await query.message.reply_text(f"{status} I'll follow up here when it's done.", parse_mode=ParseMode.HTML)
 
     async def _ticker_arg(self, update: Any, context: Any, usage: str) -> str | None:
         if not context.args:

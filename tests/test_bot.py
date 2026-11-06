@@ -240,3 +240,14 @@ async def test_commands_registered_in_telegram_menu():
 
     await register_commands(SimpleNamespace(bot=FakeBot()))
     assert [n for n, _ in sent["cmds"]] == names
+
+
+async def test_button_when_already_running(store):
+    c, _, _ = cmds_with_chat(store)
+
+    async def running(code):
+        return 0
+    c.queue_deep = running
+    u = cb_upd("deep:US.MDB")
+    await c.button(u, ctx())
+    assert "Already analysing US.MDB" in u.callback_query.message.replies[-1]

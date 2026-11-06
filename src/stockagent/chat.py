@@ -147,6 +147,9 @@ class ChatEngine:
     @staticmethod
     def _history(messages: list[ChatMessage]) -> list[BaseMessage]:
         out: list[BaseMessage] = []
+        # Some providers reject a conversation whose first turn is the assistant's.
+        while messages and messages[0].role == "bot":
+            messages = messages[1:]
         for m in messages:
             if m.role == "bot":
                 out.append(AIMessage(m.text))

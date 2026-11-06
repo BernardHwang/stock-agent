@@ -179,3 +179,23 @@ async def test_chat_analysis_follow_up(app):
 async def test_queue_deep_uses_chat_reason(app):
     assert await app.queue_deep("US.MDB") == 1
     assert [(i.code, i.reason) for i in app.store.pending_items()] == [("US.MDB", "chat")]
+
+
+async def test_follow_up_when_already_queued_via_plan(app):
+    async def follow_up(code, text):
+        return "View unchanged."
+    app.chat.follow_up = follow_up
+    app.store.enqueue("US.MDB", "plan_cmd", 1, NOW)
+    await app.queue_deep("US.MDB")
+    await app.on_analysis_result("US.MDB", "plan_cmd", "plan text")
+    assert any("Update on US.MDB" in m for m in app.sent)
+    before = len(app.sent)
+    await app.on_analysis_result("US.MDB", "plan_cmd", "plan text")  # flag cleared after one follow-up
+    assert len(app.sent) == before
+
+
+async def test_queue_deep_while_running_does_not_duplicate(app):
+    app.store.enqueue("US.MDB", "weekly", 3, NOW)
+    app.store.next_queue_item()  # now running
+    assert await app.queue_deep("US.MDB") == 0
+    assert app.store.pending_items() == []

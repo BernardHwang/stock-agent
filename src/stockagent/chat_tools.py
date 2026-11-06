@@ -185,7 +185,8 @@ class ChatToolbox:
     @_tool
     async def queue_deep_analysis(self, ticker: str) -> dict:
         code = self._code(ticker)
-        return {"queued": code, "queue_position": await self.deps.queue_deep(code)}
+        position = await self.deps.queue_deep(code)
+        return {"queued": code, "queue_position": position, "already_running": position == 0}
 
     @_tool
     async def offer_deep_analysis(self, ticker: str) -> dict:

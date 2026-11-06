@@ -93,14 +93,21 @@ class App:
             return yf_last_prices(codes)
 
     async def queue_deep(self, code: str) -> int:
+        """Queue a chat-requested deep analysis; returns its queue position, or 0 if it is already running."""
+        # Flagged separately because an existing queue row may keep its original reason (e.g. /plan).
+        self.store.kv_set(f"chat_followup:{code}", "1")
+        if self.store.is_running(code):
+            return 0
         self.store.enqueue(code, "chat", PRIORITY_PLAN_CMD, self.now())
         position = next((i for i, it in enumerate(self.store.pending_items(), 1) if it.code == code), 1)
         await self.kick_queue()
         return position
 
     async def on_analysis_result(self, code: str, reason: str, text: str) -> None:
-        if reason != "chat":
+        key = f"chat_followup:{code}"
+        if reason != "chat" and not self.store.kv_get(key):
             return
+        self.store.kv_set(key, "")
         note = await self.chat.follow_up(code, text)
         if note:
             await self.notify(format_info(f"Update on {html.escape(code)}: {html.escape(note)}"))
