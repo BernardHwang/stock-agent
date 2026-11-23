@@ -60,4 +60,4 @@ chmod 600 "$OPEND_DIR"/*.xml
 mkdir -p /home/opend/.com.futunn.FutuOpenD /home/opend/.com.moomoo.OpenD
 
 cd "$OPEND_DIR"
-exec "$OPEND_BIN" -cfg_file="$OPEND_DIR/FutuOpenD.xml" -console=0
+exec "$OPEND_BIN" -cfg_file="$OPEND_DIR/FutuOpenD.xml"
