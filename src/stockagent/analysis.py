@@ -329,7 +329,8 @@ def read_held_position(code: str, settings: Settings, gateway: Any = None) -> Po
         from .moomoo_gw import MoomooGateway
 
         gateway = MoomooGateway(settings.moomoo_host, settings.moomoo_port, settings.moomoo_security_firm,
-                                settings.markets, on_tick=lambda c, p: None)
+                                settings.markets, on_tick=lambda c, p: None,
+                                rsa_key_path=settings.moomoo_rsa_key_path)
     try:
         return next((p for p in gateway.positions() if p.code == code), None)
     except Exception as exc:

@@ -16,7 +16,7 @@ def main() -> int:
     # Only the MOOMOO_* settings matter here; Telegram values are placeholders so .env needn't be complete.
     s = Settings(telegram_bot_token="unused", telegram_chat_id=0)
     gw = MoomooGateway(s.moomoo_host, s.moomoo_port, s.moomoo_security_firm, list(SAMPLES),
-                       on_tick=lambda c, p: None)
+                       on_tick=lambda c, p: None, rsa_key_path=s.moomoo_rsa_key_path)
     try:
         gw.connect()
         report = gw.permission_report(SAMPLES)

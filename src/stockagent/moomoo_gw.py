@@ -22,8 +22,13 @@ TickFn = Callable[[str, float], None]
 class MoomooGateway:
     def __init__(self, host: str, port: int, security_firm: str, markets: list[str], on_tick: TickFn,
                  quote_factory: Callable[[], Any] | None = None,
-                 trade_factory: Callable[[str], Any] | None = None):
+                 trade_factory: Callable[[str], Any] | None = None, rsa_key_path: str | None = None):
         self.host, self.port, self.markets, self.on_tick = host, port, markets, on_tick
+        if rsa_key_path:
+            # OpenD refuses trade queries (positions) from another host/container unless the connection is
+            # encrypted with the key in its <rsa_private_key>. SDK-wide setting; must precede any context.
+            moomoo.SysConfig.enable_proto_encrypt(True)
+            moomoo.SysConfig.set_init_rsa_file(rsa_key_path)
         self.security_firm = security_firm
         self._quote_factory = quote_factory or self._default_quote
         self._trade_factory = trade_factory or self._default_trade

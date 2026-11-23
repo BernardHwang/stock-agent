@@ -16,6 +16,12 @@ services:
     env_file: ../.env
     volumes:
       - ../data/opend:/home/opend/.com.moomoo.OpenD
+      - opend-key:/home/opend/key
+    healthcheck:  # stockagent needs the RSA key before it connects
+      test: ["CMD", "test", "-s", "/home/opend/key/rsa.pem"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
     networks:
       - stocknet
     logging:
@@ -31,17 +37,21 @@ services:
     restart: unless-stopped
     init: true  # forwards SIGTERM so `docker stop` is immediate
     depends_on:
-      - opend
+      opend:
+        condition: service_healthy
     env_file: ../.env
     environment:
       # Override MOOMOO_HOST inside Docker so stockagent always talks to the opend container over stocknet
       MOOMOO_HOST: opend
       MOOMOO_PORT: "11111"
+      # Positions are trade queries; OpenD serves them across containers only over RSA-encrypted connections.
+      MOOMOO_RSA_KEY_PATH: /app/opend-key/rsa.pem
     volumes:
       - ../data:/app/data
       # Hide OpenD's saved login (data/opend) from this container; it only needs the API on opend:11111.
       - type: tmpfs
         target: /app/data/opend
+      - opend-key:/app/opend-key:ro
       - ../data/tradingagents:/home/app/.tradingagents
       - ../config:/app/config:ro
     networks:
@@ -55,3 +65,6 @@ services:
 networks:
   stocknet:
     driver: bridge
+
+volumes:
+  opend-key:

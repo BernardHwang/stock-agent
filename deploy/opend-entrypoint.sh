@@ -6,6 +6,15 @@ set -eu
 # "remember"; the login is kept in ~/.com.moomoo.OpenD, which compose persists as data/opend.
 # Schema must match the OpenD.xml shipped in the moomoo tarball (root <moomoo_opend>, listen address <ip>),
 # otherwise OpenD prints "加载本地配置失败" (failed to load local config) and exits.
+# Trade queries (positions) from the stockagent container are cross-network, which OpenD only serves encrypted.
+# The key lives in the shared opend-key volume; stockagent reads it via MOOMOO_RSA_KEY_PATH.
+RSA_KEY=/home/opend/key/rsa.pem
+if [ ! -s "$RSA_KEY" ]; then
+  openssl genrsa -traditional -out "$RSA_KEY.tmp" 1024 2>/dev/null
+  chmod 600 "$RSA_KEY.tmp"
+  mv "$RSA_KEY.tmp" "$RSA_KEY"
+fi
+
 cat > /opt/opend/OpenD.xml <<'EOF2'
 <moomoo_opend>
     <ip>0.0.0.0</ip>
@@ -16,6 +25,7 @@ cat > /opt/opend/OpenD.xml <<'EOF2'
     <telnet_ip>127.0.0.1</telnet_ip>
     <telnet_port>22222</telnet_port>
     <auto_hold_quote_right>1</auto_hold_quote_right>
+    <rsa_private_key>/home/opend/key/rsa.pem</rsa_private_key>
 </moomoo_opend>
 EOF2
 

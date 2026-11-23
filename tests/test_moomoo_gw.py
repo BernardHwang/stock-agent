@@ -1,3 +1,4 @@
+import moomoo
 import pandas as pd
 import pytest
 
@@ -159,3 +160,17 @@ def test_trade_context_replaced_after_failed_query():
     FlakyTrade.fail = False
     assert g.positions() == [Position(code="US.NVDA", qty=10, avg_cost=120.5)]
     assert made == ["US", "US"] and closed == ["US"]
+
+
+def test_rsa_key_enables_encrypted_connections(monkeypatch):
+    calls = []
+    monkeypatch.setattr(moomoo.SysConfig, "enable_proto_encrypt", classmethod(lambda cls, on: calls.append(on)))
+    monkeypatch.setattr(moomoo.SysConfig, "set_init_rsa_file", classmethod(lambda cls, f: calls.append(f)))
+    # OpenD only serves trade queries (positions) to another host/container over an encrypted connection.
+    MoomooGateway("opend", 1, "FUTUMY", ["US"], on_tick=lambda c, p: None, quote_factory=FakeQuote,
+                  trade_factory=FakeTrade, rsa_key_path="/keys/rsa.pem").connect()
+    assert calls == [True, "/keys/rsa.pem"]
+    calls.clear()
+    MoomooGateway("127.0.0.1", 1, "FUTUMY", ["US"], on_tick=lambda c, p: None, quote_factory=FakeQuote,
+                  trade_factory=FakeTrade).connect()
+    assert calls == []

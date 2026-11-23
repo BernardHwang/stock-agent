@@ -7,7 +7,7 @@ ARG OPEND_VERSION=10.12.7208
 ARG OPEND_URL="https://softwaredownload.futustatic.com/moomoo_OpenD_${OPEND_VERSION}_Ubuntu18.04.tar.gz"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl tar telnet gettext-base \
+    ca-certificates curl tar telnet gettext-base openssl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/opend
@@ -24,7 +24,7 @@ COPY deploy/opend-entrypoint.sh /usr/local/bin/opend-entrypoint.sh
 RUN sed -i 's/\r$//' /usr/local/bin/opend-entrypoint.sh && chmod +x /usr/local/bin/opend-entrypoint.sh \
     && (userdel -r ubuntu 2>/dev/null || true) \
     && useradd --uid 1000 --create-home --home-dir /home/opend opend \
-    && mkdir -p /home/opend/.com.moomoo.OpenD \
+    && mkdir -p /home/opend/.com.moomoo.OpenD /home/opend/key \
     && chown -R opend:opend /opt/opend /home/opend
 
 USER opend

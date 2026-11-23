@@ -59,7 +59,8 @@ class App:
         self.rules = RuleEngine(self.store)
         self.loop: asyncio.AbstractEventLoop | None = None
         self.gateway = gateway or MoomooGateway(settings.moomoo_host, settings.moomoo_port,
-                                                settings.moomoo_security_firm, settings.markets, self.on_tick)
+                                                settings.moomoo_security_firm, settings.markets, self.on_tick,
+                                                rsa_key_path=settings.moomoo_rsa_key_path)
         self.feed = feed or make_feed(settings.price_source, self.gateway, self.on_tick, settings.poll_interval_s)
         self._sender = sender
         self._tasks: set[asyncio.Task] = set()

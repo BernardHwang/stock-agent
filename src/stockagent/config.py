@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     moomoo_host: str = "127.0.0.1"
     moomoo_port: int = 11111
     moomoo_security_firm: str = "FUTUMY"
+    # OpenD's RSA private key; required when OpenD is not on 127.0.0.1 (e.g. the Docker setup), else positions fail
+    moomoo_rsa_key_path: str | None = None
     markets: list[str] = ["US"]
 
     # Provider names follow TradingAgents: "google", "anthropic", "openai", "openrouter", "cloudflare", ...
