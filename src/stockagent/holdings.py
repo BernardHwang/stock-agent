@@ -4,6 +4,7 @@ from .models import Alert, PlanState, Position
 from .store import Store
 
 PRIORITY_NEW_HOLDING = 1
+EMPTY_READ_KEY = "positions_empty_read"
 
 
 def sync_holdings(store: Store, positions: list[Position], now: datetime) -> list[Alert]:
@@ -11,6 +12,14 @@ def sync_holdings(store: Store, positions: list[Position], now: datetime) -> lis
     previous = {p.code for p in store.last_positions()}
     current = {p.code for p in positions}
     alerts: list[Alert] = []
+
+    # OpenD can briefly report no positions (restart, re-login). Trust "everything sold" only on a second read,
+    # otherwise every held plan would close and be re-analysed as a new holding on the next good read.
+    if not current and previous and not store.kv_get(EMPTY_READ_KEY):
+        store.kv_set(EMPTY_READ_KEY, "1")
+        return alerts
+    if store.kv_get(EMPTY_READ_KEY):
+        store.kv_set(EMPTY_READ_KEY, "")
 
     for code in sorted(current - previous):
         plan = store.active_plan(code)

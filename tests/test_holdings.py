@@ -33,10 +33,29 @@ def test_buy_links_open_plan(store):
     assert [a.kind for a in alerts] == ["info"] and store.pending_count() == 0
 
 
-def test_full_sell_closes_plan(store):
+def test_full_sell_closes_plan_after_second_empty_read(store):
+    apply_new_analysis(store, "US.NVDA", buy(), "weekly", NOW)
+    sync_holdings(store, [pos()], NOW)
+    assert sync_holdings(store, [], NOW) == []  # one empty read may be a glitch
+    assert store.active_plan("US.NVDA").state == PlanState.HELD
+    sync_holdings(store, [], NOW)
+    assert store.active_plan("US.NVDA") is None
+
+
+def test_empty_read_glitch_does_not_requeue_holdings(store):
     apply_new_analysis(store, "US.NVDA", buy(), "weekly", NOW)
     sync_holdings(store, [pos()], NOW)
     sync_holdings(store, [], NOW)
+    assert sync_holdings(store, [pos()], NOW) == []
+    assert store.active_plan("US.NVDA").state == PlanState.HELD and store.pending_count() == 0
+    sync_holdings(store, [], NOW)  # the earlier empty read must not count towards this one
+    assert store.active_plan("US.NVDA").state == PlanState.HELD
+
+
+def test_selling_one_of_several_closes_immediately(store):
+    apply_new_analysis(store, "US.NVDA", buy(), "weekly", NOW)
+    sync_holdings(store, [pos(), pos("US.AMD")], NOW)
+    sync_holdings(store, [pos("US.AMD")], NOW)
     assert store.active_plan("US.NVDA") is None
     assert store.plans_in({PlanState.CLOSED})[0].code == "US.NVDA"
 
