@@ -16,6 +16,11 @@ class RateLimited(Exception):
     pass
 
 
+@pytest.fixture(autouse=True)
+def _no_network_snapshot(monkeypatch):
+    monkeypatch.setattr(analysis, "verified_snapshot", lambda symbol, day: "| 2026-11-06 | 101.00 |")
+
+
 def settings(**kw):
     return Settings(_env_file=None, telegram_bot_token="t", telegram_chat_id=1, **kw)
 
@@ -350,3 +355,50 @@ def test_openai_payload_splits_parallel_tool_calls():
     assert len(set(ids)) == 2 and [m["tool_call_id"] for m in out if m["role"] == "tool"] == ids
     assert [m["content"] for m in out if m["role"] == "tool"] == ["news", "global"]
     assert all(m["content"] for m in out if m["role"] == "assistant")
+
+
+class _ReportGraph:
+    def __init__(self, selected_analysts, debug, config):
+        pass
+
+    def propagate(self, symbol, day):
+        return {"final_trade_decision": "BUY", "market_report": "uptrend"}, "Buy"
+
+
+def test_report_ends_with_verified_market_data(monkeypatch):
+    # The plan extractor must see real prices; the analysts' prose alone let it invent levels from memory.
+    monkeypatch.setattr(analysis, "TradingAgentsGraph", _ReportGraph)
+    seen = []
+    monkeypatch.setattr(analysis, "verified_snapshot", lambda symbol, day: seen.append((symbol, day)) or "CLOSE 316")
+    out = analysis.run_tradingagents("MDB", "2026-11-23", settings())
+    assert seen == [("MDB", "2026-11-23")]
+    assert analysis.report_section(out, analysis.VERIFIED_SECTION) == "CLOSE 316"
+
+
+def test_report_survives_snapshot_failure(monkeypatch):
+    monkeypatch.setattr(analysis, "TradingAgentsGraph", _ReportGraph)
+
+    def boom(symbol, day):
+        raise RuntimeError("yahoo down")
+
+    monkeypatch.setattr(analysis, "verified_snapshot", boom)
+    out = analysis.run_tradingagents("MDB", "2026-11-23", settings())
+    assert "BUY" in out and analysis.report_section(out, analysis.VERIFIED_SECTION) is None
+
+
+def test_extract_prompt_anchors_levels_to_verified_data(monkeypatch):
+    prompts = []
+
+    class FakeLLM:
+        def with_structured_output(self, schema):
+            return self
+
+        def invoke(self, prompt):
+            prompts.append(prompt)
+            return buy()
+
+    import langchain.chat_models as cm
+    monkeypatch.setattr(cm, "init_chat_model", lambda *a, **kw: FakeLLM())
+    analysis.extract_plan("## Verified market data" + chr(10) + "CLOSE 316", "US.MDB", None, settings())
+    assert 'Base every price level on the "Verified market data" section' in prompts[0]
+    assert "CLOSE 316" in prompts[0]

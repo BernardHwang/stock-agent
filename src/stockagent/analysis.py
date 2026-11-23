@@ -102,6 +102,8 @@ def llm_client_kwargs(settings: Settings) -> dict[str, Any]:
         kw["base_url"] = settings.openai_base_url
     return kw
 
+VERIFIED_SECTION = "Verified market data"
+
 EXTRACT_PROMPT = """You are a pragmatic, candid personal financial advisor turning an equity research report
 into a clear trade plan for a long-only investor. The investor typically holds positions for 3-12 months and
 targets at least 20% annualized return. They place every order themselves; you advise them as their partner.
@@ -116,6 +118,9 @@ Rules:
 - If the report does not support a buy, do not force one: return HOLD with low confidence and explain honestly
   why waiting or passing is the smarter move.
 - All prices in the stock's trading currency.
+- Base every price level on the "{verified}" section at the end of the report: it is verified exchange data
+  (latest close, moving averages, Bollinger bands, recent closes). If the analysts' text quotes different
+  prices, trust the verified data. A BUY zone must sit near the latest close, not where it traded long ago.
 - Reasoning: write directly to the investor in a warm, candid advisor voice ("I'd look to accumulate...",
   "Since you're already holding at...", "The risk here is..."). Explain the core thesis, key catalyst, and
   main risk in plain English, at most 600 characters.
@@ -161,8 +166,19 @@ def run_tradingagents(symbol: str, day: str, settings: Settings) -> str:
     state, _signal = graph.propagate(symbol, day)
     sections = [("Final decision", "final_trade_decision"), ("Trader plan", "trader_investment_plan"),
                 ("Technical analysis", "market_report"), ("Fundamentals", "fundamentals_report")]
-    return "\n\n".join(f"## {title}\n{str(state.get(key, ''))[:6000]}" for title, key in sections
-                       if state.get(key))
+    parts = [f"## {title}\n{str(state.get(key, ''))[:6000]}" for title, key in sections if state.get(key)]
+    try:
+        parts.append(f"## {VERIFIED_SECTION}\n{verified_snapshot(symbol, day)[:4000]}")
+    except Exception:
+        log.warning("no verified market snapshot for %s", symbol, exc_info=True)
+    return "\n\n".join(parts)
+
+
+def verified_snapshot(symbol: str, day: str) -> str:
+    """TradingAgents' deterministic yfinance snapshot: latest close, indicators, recent closes (no AI calls)."""
+    from tradingagents.dataflows.vendors.yahoo.snapshot import build_verified_market_snapshot
+
+    return build_verified_market_snapshot(symbol, day, 10)
 
 
 def langchain_provider(name: str) -> str:
@@ -202,7 +218,7 @@ def extract_plan(report: str, code: str, held: Position | None, settings: Settin
     )
     held_line = (f"The investor HOLDS {held.qty:g} shares at average cost {held.avg_cost:.2f}." if held
                  else "The investor does not hold this stock.")
-    prompt = EXTRACT_PROMPT.format(code=code, held=held_line, report=report)
+    prompt = EXTRACT_PROMPT.format(code=code, held=held_line, report=report, verified=VERIFIED_SECTION)
     try:
         llm = base_llm.with_structured_output(PlanFields)
         result = llm.invoke(prompt)
