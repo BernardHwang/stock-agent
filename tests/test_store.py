@@ -125,3 +125,12 @@ def test_chat_call_counter_per_day(store):
     assert store.count_chat_call(a) == 2
     assert store.count_chat_call(b) == 1
     assert store.chat_calls_on(a) == 2
+
+
+def test_runs_counted_by_local_day(store):
+    from datetime import date
+    # 17:00 UTC on Nov 6 is 01:00 on Nov 7 in Kuala Lumpur.
+    store.record_run("US.A", datetime(2026, 11, 6, 17, 0))
+    assert store.count_runs_on(date(2026, 11, 7), "Asia/Kuala_Lumpur") == 1
+    assert store.count_runs_on(date(2026, 11, 6), "Asia/Kuala_Lumpur") == 0
+    assert store.count_runs_on(date(2026, 11, 6)) == 1  # UTC by default

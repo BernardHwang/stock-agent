@@ -192,3 +192,13 @@ async def test_tool_call_turn_sent_back_with_text(store):
     assert (await eng.reply("market?")).text == "Calm day."
     sent_back = next(m for m in llm.calls[1] if isinstance(m, AIMessage))
     assert sent_back.content and sent_back.tool_calls[0]["name"] == "get_market_overview"
+
+
+async def test_tool_call_turn_keeps_provider_metadata(store):
+    # Gemini keeps thought signatures in additional_kwargs; rebuilding the message would drop them.
+    call = AIMessage(content="", tool_calls=[{"name": "get_market_overview", "args": {}, "id": "c0"}],
+                     additional_kwargs={"__gemini_function_call_thought_signatures__": {"c0": "sig"}})
+    eng, llm = engine(store, [call, AIMessage("ok")])
+    await eng.reply("market?")
+    sent_back = next(m for m in llm.calls[1] if isinstance(m, AIMessage))
+    assert sent_back.additional_kwargs["__gemini_function_call_thought_signatures__"] == {"c0": "sig"}

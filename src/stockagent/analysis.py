@@ -13,7 +13,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from .config import Settings
+from .config import Settings, local_date
 from .health import Health
 from .lifecycle import apply_new_analysis
 from .messages import format_health, format_info, format_invalid_plan, format_no_plan, format_plan
@@ -74,6 +74,9 @@ def _cloudflare_safe_messages(messages: list[dict]) -> list[dict]:
         while j < len(messages) and messages[j].get("role") == "tool":
             results.append(messages[j])
             j += 1
+        if len(calls) > 1 and len(results) != len(calls):
+            log.warning("cannot split %d tool calls with %d results; Cloudflare may reject this request",
+                        len(calls), len(results))
         if len(calls) == 1 or len(results) != len(calls):
             out.append({**m, "content": m.get("content") or TOOL_CALL_FILLER})
             i += 1
@@ -102,7 +105,7 @@ def llm_client_kwargs(settings: Settings) -> dict[str, Any]:
         kw["base_url"] = settings.openai_base_url
     return kw
 
-VERIFIED_SECTION = "Verified market data"
+VERIFIED_SECTION = "Verified market data snapshot"
 
 EXTRACT_PROMPT = """You are a pragmatic, candid personal financial advisor turning an equity research report
 into a clear trade plan for a long-only investor. The investor typically holds positions for 3-12 months and
@@ -168,7 +171,7 @@ def run_tradingagents(symbol: str, day: str, settings: Settings) -> str:
                 ("Technical analysis", "market_report"), ("Fundamentals", "fundamentals_report")]
     parts = [f"## {title}\n{str(state.get(key, ''))[:6000]}" for title, key in sections if state.get(key)]
     try:
-        parts.append(f"## {VERIFIED_SECTION}\n{verified_snapshot(symbol, day)[:4000]}")
+        parts.append(verified_snapshot(symbol, day)[:4000])  # has its own "## Verified market data snapshot" heading
     except Exception:
         log.warning("no verified market snapshot for %s", symbol, exc_info=True)
     return "\n\n".join(parts)
@@ -281,7 +284,8 @@ class AnalysisWorker:
 
     async def drain(self) -> None:
         async with self._lock:  # one analysis at a time
-            while self.store.count_runs_on(self.now().date()) < self.settings.max_runs_per_day:
+            tz = self.settings.tz
+            while self.store.count_runs_on(local_date(self.now(), tz), tz) < self.settings.max_runs_per_day:
                 item = self.store.next_queue_item()
                 if item is None:
                     return
@@ -292,18 +296,29 @@ class AnalysisWorker:
         """Returns False when draining should stop (AI quota exhausted)."""
         now = self.now()
         held = next((p for p in self.store.last_positions() if p.code == code), None)
-        try:
-            self.store.record_run(code, now)
-            report = await asyncio.to_thread(self.run, to_yf(code), now.date().isoformat(), self.settings)
-        except Exception as exc:
-            return await self._failed(item_id, code, exc)
-        # Save before extracting: the report is the expensive part and chat can still use it if extraction fails.
-        price = await self._price(code)
-        save_report(self.store, code, report, now, price)
+        pending_key = f"extract_pending:{code}"
+        saved = load_report(self.store, code) if self.store.kv_get(pending_key) else None
+        if saved is not None:
+            # The last run's extraction hit a rate limit: retry it from the saved report instead of re-running.
+            report = saved.text
+            price = await self._price(code) or saved.price
+        else:
+            try:
+                self.store.record_run(code, now)
+                report = await asyncio.to_thread(self.run, to_yf(code), now.date().isoformat(), self.settings)
+            except Exception as exc:
+                if is_rate_limit(exc):
+                    self.store.forget_run(code, now)  # refused before any work: don't spend the daily budget
+                return await self._failed(item_id, code, exc)
+            # Save before extracting: the report is the expensive part and chat can still use it.
+            price = await self._price(code)
+            save_report(self.store, code, report, now, price)
         try:
             fields = await asyncio.to_thread(self.extract, report, code, held, self.settings)
         except Exception as exc:
+            self.store.kv_set(pending_key, "1" if is_rate_limit(exc) else "")
             return await self._failed(item_id, code, exc)
+        self.store.kv_set(pending_key, "")
 
         if self.health.resolved("ai_quota"):
             await self.notify(format_info("AI quota available again."))
@@ -377,11 +392,17 @@ def read_held_position(code: str, settings: Settings, gateway: Any = None) -> Po
         gateway = MoomooGateway(settings.moomoo_host, settings.moomoo_port, settings.moomoo_security_firm,
                                 settings.markets, on_tick=lambda c, p: None,
                                 rsa_key_path=settings.moomoo_rsa_key_path)
+        own_gateway = True
+    else:
+        own_gateway = False
     try:
         return next((p for p in gateway.positions() if p.code == code), None)
     except Exception as exc:
         print(f"Could not read moomoo positions ({type(exc).__name__}); analysing as not held.")
         return None
+    finally:
+        if own_gateway:
+            gateway.close()  # the SDK's threads are non-daemon: an open context would keep the CLI alive
 
 
 if __name__ == "__main__":

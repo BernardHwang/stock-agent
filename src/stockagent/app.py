@@ -16,7 +16,7 @@ from .analysis import AnalysisWorker, patch_openai_tool_messages
 from .bot import PRIORITY_CANDIDATE, PRIORITY_PLAN_CMD, BotCommands, build_bot, send, start_bot
 from .chat import ChatEngine
 from .chat_tools import ChatDeps, ChatToolbox
-from .config import Settings, load_screener_rules, load_universe
+from .config import Settings, load_screener_rules, load_universe, local_date
 from .health import Health
 from .holdings import sync_holdings
 from .lifecycle import expire_stale
@@ -365,7 +365,7 @@ class App:
         problems = self.health.snapshot()
         return {
             "opend": "problem" if any(p.startswith("opend") for p in problems) else "ok",
-            "ai_runs_today": self.store.count_runs_on(self.now().date()),
+            "ai_runs_today": self.store.count_runs_on(local_date(self.now(), self.settings.tz), self.settings.tz),
             "max_runs_per_day": self.settings.max_runs_per_day,
             "queue": self.store.pending_count(),
             "last_screen": self.store.kv_get("last_screen"),

@@ -45,7 +45,7 @@ services:
       MOOMOO_HOST: opend
       MOOMOO_PORT: "11111"
       # Positions are trade queries; OpenD serves them across containers only over RSA-encrypted connections.
-      MOOMOO_RSA_KEY_PATH: /app/opend-key/rsa.pem
+      MOOMOO_RSA_KEY_PATH: /app/opend-key/rsa.pem  # mode 600, readable because both images run as uid 1000
     volumes:
       - ../data:/app/data
       # Hide OpenD's saved login (data/opend) from this container; it only needs the API on opend:11111.

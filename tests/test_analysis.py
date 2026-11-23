@@ -18,7 +18,8 @@ class RateLimited(Exception):
 
 @pytest.fixture(autouse=True)
 def _no_network_snapshot(monkeypatch):
-    monkeypatch.setattr(analysis, "verified_snapshot", lambda symbol, day: "| 2026-11-06 | 101.00 |")
+    monkeypatch.setattr(analysis, "verified_snapshot",
+                        lambda symbol, day: f"## Verified market data snapshot for {symbol}\n| 2026-11-06 | 101.00 |")
 
 
 def settings(**kw):
@@ -369,10 +370,12 @@ def test_report_ends_with_verified_market_data(monkeypatch):
     # The plan extractor must see real prices; the analysts' prose alone let it invent levels from memory.
     monkeypatch.setattr(analysis, "TradingAgentsGraph", _ReportGraph)
     seen = []
-    monkeypatch.setattr(analysis, "verified_snapshot", lambda symbol, day: seen.append((symbol, day)) or "CLOSE 316")
+    snapshot = "## Verified market data snapshot for MDB\nCLOSE 316"
+    monkeypatch.setattr(analysis, "verified_snapshot", lambda symbol, day: seen.append((symbol, day)) or snapshot)
     out = analysis.run_tradingagents("MDB", "2026-11-23", settings())
     assert seen == [("MDB", "2026-11-23")]
-    assert analysis.report_section(out, analysis.VERIFIED_SECTION) == "CLOSE 316"
+    assert out.endswith("## Verified market data snapshot for MDB\nCLOSE 316")
+    assert out.count("## Verified market data") == 1
 
 
 def test_report_survives_snapshot_failure(monkeypatch):
@@ -383,7 +386,7 @@ def test_report_survives_snapshot_failure(monkeypatch):
 
     monkeypatch.setattr(analysis, "verified_snapshot", boom)
     out = analysis.run_tradingagents("MDB", "2026-11-23", settings())
-    assert "BUY" in out and analysis.report_section(out, analysis.VERIFIED_SECTION) is None
+    assert "BUY" in out and "Verified market data" not in out
 
 
 def test_extract_prompt_anchors_levels_to_verified_data(monkeypatch):
@@ -399,6 +402,65 @@ def test_extract_prompt_anchors_levels_to_verified_data(monkeypatch):
 
     import langchain.chat_models as cm
     monkeypatch.setattr(cm, "init_chat_model", lambda *a, **kw: FakeLLM())
-    analysis.extract_plan("## Verified market data" + chr(10) + "CLOSE 316", "US.MDB", None, settings())
-    assert 'Base every price level on the "Verified market data" section' in prompts[0]
+    analysis.extract_plan("## Verified market data snapshot for MDB" + chr(10) + "CLOSE 316", "US.MDB", None,
+                          settings())
+    assert 'Base every price level on the "Verified market data snapshot" section' in prompts[0]
     assert "CLOSE 316" in prompts[0]
+
+
+async def test_rate_limited_run_does_not_use_daily_budget(store):
+    store.enqueue("US.A", "weekly", 3, NOW)
+
+    def run(*a):
+        raise RateLimited("429 rate limit")
+
+    w, _ = make(store, run=run)
+    await w.drain()
+    assert store.count_runs_on(NOW.date(), "Asia/Kuala_Lumpur") == 0 and store.pending_count() == 1
+
+
+async def test_extraction_rate_limit_reuses_saved_report(store):
+    store.enqueue("US.NVDA", "weekly", 3, NOW)
+    runs, attempts = [], []
+
+    def extract(report, code, held, s):
+        attempts.append(report)
+        if len(attempts) == 1:
+            raise RateLimited("429 rate limit")
+        return buy()
+
+    w, sent = make(store, run=lambda symbol, day, s: runs.append(symbol) or "report for NVDA", extract=extract)
+    await w.drain()
+    await w.drain()
+    assert runs == ["NVDA"]  # the expensive TradingAgents run is not repeated
+    assert attempts == ["report for NVDA", "report for NVDA"]
+    assert store.active_plan("US.NVDA") is not None
+
+
+async def test_daily_cap_counts_the_owners_local_day(store):
+    # 2026-11-05 20:00 UTC is 04:00 on 2026-11-06 in Kuala Lumpur, the same local day as NOW (10:00 MYT).
+    store.record_run("US.X", datetime(2026, 11, 5, 20, 0))
+    store.enqueue("US.A", "weekly", 3, NOW)
+    w, _ = make(store, max_runs_per_day=1)
+    await w.drain()
+    assert store.pending_count() == 1
+
+
+def test_read_held_position_closes_its_own_gateway(monkeypatch):
+    from stockagent import moomoo_gw
+
+    closed = []
+
+    class FakeGw:
+        def __init__(self, *a, **kw):
+            pass
+
+        def positions(self):
+            return [Position(code="US.NVDA", qty=1, avg_cost=100)]
+
+        def close(self):
+            closed.append(True)
+
+    monkeypatch.setattr(moomoo_gw, "MoomooGateway", FakeGw)
+    assert analysis.read_held_position("US.NVDA", settings()).qty == 1
+    assert closed == [True]  # moomoo SDK threads are non-daemon: an open context keeps the CLI alive

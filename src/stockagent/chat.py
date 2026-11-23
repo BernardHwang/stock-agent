@@ -13,7 +13,7 @@ from langchain_core.tools import BaseTool, StructuredTool
 
 from .analysis import TOOL_CALL_FILLER, is_rate_limit, langchain_provider, llm_client_kwargs
 from .chat_tools import TOOL_NAMES, ChatToolbox
-from .config import Settings
+from .config import Settings, local_date
 from .models import ChatMessage
 from .store import Store
 
@@ -170,7 +170,7 @@ class ChatEngine:
 
     def _spend(self) -> None:
         """Count one model call against the daily cap; raise when the cap is reached."""
-        day = self.now().date()
+        day = local_date(self.now(), self.settings.tz)
         cap = self.settings.chat_max_per_day
         if self.store.chat_calls_on(day) >= cap:
             raise _CapReached
@@ -238,7 +238,7 @@ class ChatEngine:
                 return _text(ai.content) or EMPTY_TEXT
             if not _text(ai.content):
                 # Cloudflare Workers AI rejects (HTTP 400) an assistant tool-call message with null content.
-                ai = AIMessage(TOOL_CALL_FILLER, tool_calls=ai.tool_calls)
+                ai = ai.model_copy(update={"content": TOOL_CALL_FILLER})  # keeps provider metadata
             messages.append(ai)
             for call in ai.tool_calls:
                 result = await self._dispatch(call["name"], call.get("args") or {})

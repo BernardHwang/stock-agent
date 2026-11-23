@@ -1,8 +1,9 @@
 import json
 import sqlite3
 import threading
-from datetime import date, datetime
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from .models import ACTIVE_STATES, Alert, ChatMessage, Level, Note, Plan, PlanFields, PlanState, Position, QueueItem
 
@@ -192,9 +193,17 @@ class Store:
     def record_run(self, code: str, at: datetime) -> None:
         self._exec("INSERT INTO runs(at, code) VALUES (?,?)", (at.isoformat(), code))
 
-    def count_runs_on(self, day: date) -> int:
-        return int(self._query("SELECT COUNT(*) AS n FROM runs WHERE substr(at,1,10)=?",
-                               (day.isoformat(),))[0]["n"])
+    def forget_run(self, code: str, at: datetime) -> None:
+        """Undo record_run, e.g. when the provider refused the call before any work was done."""
+        self._exec("DELETE FROM runs WHERE rowid = (SELECT MAX(rowid) FROM runs WHERE code=? AND at=?)",
+                   (code, at.isoformat()))
+
+    def count_runs_on(self, day: date, tz: str = "UTC") -> int:
+        """Runs during ``day`` in time zone ``tz`` (run times are stored as naive UTC)."""
+        start = datetime.combine(day, time.min, ZoneInfo(tz)).astimezone(UTC).replace(tzinfo=None)
+        end = datetime.combine(day + timedelta(days=1), time.min, ZoneInfo(tz)).astimezone(UTC).replace(tzinfo=None)
+        return int(self._query("SELECT COUNT(*) AS n FROM runs WHERE at >= ? AND at < ?",
+                               (start.isoformat(), end.isoformat()))[0]["n"])
 
     # outcomes
     def save_outcome(self, plan_id: int, first_hit: Level | None, ret_4w: float | None,

@@ -1,5 +1,7 @@
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 import yaml
 from pydantic import BaseModel, SecretStr
@@ -56,6 +58,11 @@ class Settings(BaseSettings):
     price_source: Literal["moomoo", "poll"] = "moomoo"
     poll_interval_s: int = 300
     tz: str = "Asia/Kuala_Lumpur"
+
+
+def local_date(now: datetime, tz: str) -> date:
+    """The owner's calendar day for a naive-UTC timestamp; daily AI budgets reset at their midnight."""
+    return now.replace(tzinfo=UTC).astimezone(ZoneInfo(tz)).date()
 
 
 class ScreenerRules(BaseModel):
