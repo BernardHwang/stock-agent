@@ -41,21 +41,20 @@ EOF
 
 chmod 600 /opt/opend/OpenD.xml
 
-# Find the OpenD binary (located either at /opt/opend/OpenD or in a subfolder like Futu_OpenD-Ubuntu18.04-x64)
-OPEND_BIN="/opt/opend/OpenD"
-if [ ! -x "$OPEND_BIN" ]; then
-  FOUND=$(find /opt/opend -maxdepth 4 -type f -name "OpenD" | head -n 1)
-  if [ -n "$FOUND" ]; then
-    OPEND_BIN="$FOUND"
-    chmod +x "$OPEND_BIN"
-  fi
+# Find the OpenD binary (named either FutuOpenD or OpenD inside /opt/opend or Futu_OpenD-Ubuntu18.04-x64)
+OPEND_BIN="$(find /opt/opend -maxdepth 4 -type f \( -name 'FutuOpenD' -o -name 'OpenD' \) | head -n 1)"
+if [ -z "$OPEND_BIN" ]; then
+  echo "ERROR: Could not find FutuOpenD or OpenD binary under /opt/opend" >&2
+  exit 1
 fi
+chmod +x "$OPEND_BIN"
 
 OPEND_DIR="$(dirname "$OPEND_BIN")"
+cp -f /opt/opend/OpenD.xml "$OPEND_DIR/FutuOpenD.xml"
 if [ "$OPEND_DIR" != "/opt/opend" ]; then
   cp -f /opt/opend/OpenD.xml "$OPEND_DIR/OpenD.xml"
-  chmod 600 "$OPEND_DIR/OpenD.xml"
 fi
+chmod 600 "$OPEND_DIR"/*.xml
 
 cd "$OPEND_DIR"
 exec "$OPEND_BIN"

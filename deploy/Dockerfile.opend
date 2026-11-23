@@ -1,6 +1,6 @@
 # Runs official Moomoo OpenD (x86-64 Linux CLI) inside an isolated Docker container.
-# Also works on Oracle ARM VMs (VM.Standard.A1.Flex) via `platform: linux/amd64` + binfmt/qemu.
-FROM --platform=linux/amd64 ubuntu:24.04
+# Also works on ARM VMs via `platform: linux/amd64` + binfmt/qemu.
+FROM ubuntu:24.04
 
 ARG OPEND_VERSION=9.6.5608
 ARG OPEND_URL="https://softwaredownload.futunn.com/Futu_OpenD_${OPEND_VERSION}_Ubuntu18.04.tar.gz"
@@ -11,11 +11,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /opt/opend
 
-# Download official Moomoo/Futu OpenD CLI release and flatten the OpenD binary into /opt/opend
+# Download official Moomoo/Futu OpenD CLI release (contains FutuOpenD / OpenD inside Futu_OpenD-Ubuntu18.04-x64)
 RUN curl -fsSL "${OPEND_URL}" -o /tmp/opend.tar.gz \
     && tar -xzf /tmp/opend.tar.gz --strip-components=1 -C /opt/opend \
     && rm -f /tmp/opend.tar.gz \
-    && OPEND_BIN="$(find /opt/opend -type f -name 'OpenD' | head -n 1)" \
+    && OPEND_BIN="$(find /opt/opend -type f \( -name 'FutuOpenD' -o -name 'OpenD' \) | head -n 1)" \
     && test -n "$OPEND_BIN" \
     && chmod +x "$OPEND_BIN"
 
