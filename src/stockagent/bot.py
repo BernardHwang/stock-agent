@@ -67,10 +67,12 @@ class BotCommands:
         chunks = chunk_text(text)
         for i, chunk in enumerate(chunks):
             markup = reply_markup if i == len(chunks) - 1 else None
-            await _html_or_plain(
-                lambda body, mode, m=markup: update.message.reply_text(
-                    body, parse_mode=mode, disable_web_page_preview=True, reply_markup=m),
-                chunk)
+
+            async def reply(body: str, mode: str | None, markup: Any = markup) -> Any:
+                return await update.message.reply_text(body, parse_mode=mode, disable_web_page_preview=True,
+                                                       reply_markup=markup)
+
+            await _html_or_plain(reply, chunk)
 
     async def _chat(self, update: Any, context: Any, text: str, quoted: str | None = None) -> None:
         if self.chat is None:

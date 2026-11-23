@@ -420,7 +420,8 @@ class App:
             finally:
                 scheduler.shutdown(wait=False)
                 await self.feed.stop()
-                await tg.updater.stop()
+                if tg.updater is not None:
+                    await tg.updater.stop()
                 await tg.stop()
                 if hasattr(self.gateway, "close"):
                     self.gateway.close()
