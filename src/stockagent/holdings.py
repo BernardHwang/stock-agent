@@ -18,19 +18,21 @@ def sync_holdings(store: Store, positions: list[Position], now: datetime) -> lis
             plan.state = PlanState.HELD
             store.update_plan(plan)
             alerts.append(Alert(code=code, kind="info", plan_id=plan.id,
-                                text=f"Bought {code}. Now watching its take-profit and stop loss (plan #{plan.id})."))
+                                text=f"I see you picked up {code} in moomoo. I've linked it to plan #{plan.id} "
+                                     "and I'm watching your take-profit and stop-loss levels."))
         elif plan is None:
             store.enqueue(code, "new_holding", PRIORITY_NEW_HOLDING, now)
             alerts.append(Alert(code=code, kind="info",
-                                text=f"Now tracking {code}. An analysis is queued to set its take-profit and "
-                                     "stop loss."))
+                                text=f"Now tracking your new position in {code}. I've queued a deep analysis to "
+                                     "set up our target and stop-loss levels."))
 
     for plan in store.plans_in({PlanState.HELD}):
         if plan.code not in current:
             plan.state = PlanState.CLOSED
             store.update_plan(plan)
             alerts.append(Alert(code=plan.code, kind="info", plan_id=plan.id,
-                                text=f"{plan.code} no longer held. Plan #{plan.id} closed."))
+                                text=f"Looks like you closed out {plan.code} ({plan.code} no longer held), so "
+                                     f"I've wrapped up plan #{plan.id}."))
 
     store.save_positions(positions, now)
     return alerts

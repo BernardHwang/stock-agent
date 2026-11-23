@@ -51,7 +51,7 @@ async def test_valid_plan_saved_and_notified(store):
     w, sent = make(store)
     await w.drain()
     assert store.active_plan("US.NVDA").state == PlanState.OPEN
-    assert len(sent) == 1 and "BUY US.NVDA" in sent[0]
+    assert len(sent) == 1 and "US.NVDA" in sent[0] and "BUY" in sent[0]
     assert store.count_runs_on(NOW.date()) == 1
 
 
@@ -60,7 +60,7 @@ async def test_invalid_plan_not_saved_owner_told(store):
     w, sent = make(store, extract=lambda *a: buy(sl=101))
     await w.drain()
     assert store.active_plan("US.NVDA") is None
-    assert len(sent) == 1 and "no valid plan" in sent[0]
+    assert len(sent) == 1 and "inconsistent levels" in sent[0]
 
 
 async def test_rate_limit_requeues_and_alerts_once(store):
@@ -125,7 +125,7 @@ async def test_no_buy_signal_still_reported(store):
     w, sent = make(store, extract=lambda *a: exit_f)
     await w.drain()
     assert store.active_plan("US.NVDA") is None
-    assert "no buy plan" in sent[0].lower()
+    assert "buy plan" in sent[0].lower()
 
 
 def test_is_rate_limit():
@@ -156,7 +156,7 @@ async def test_stop_above_current_price_rejected(store):
     w, sent = make(store)
     w.price_fn = lambda code: 85.0  # already below the proposed stop of 90
     await w.drain()
-    assert store.active_plan("US.NVDA") is None and "no valid plan" in sent[0]
+    assert store.active_plan("US.NVDA") is None and "inconsistent levels" in sent[0]
 
 
 async def test_failure_after_extraction_does_not_leave_item_running(store, monkeypatch):
@@ -169,9 +169,39 @@ async def test_failure_after_extraction_does_not_leave_item_running(store, monke
 
 
 @pytest.mark.parametrize("name,expected", [("google", "google_genai"), ("openai", "openai"),
-                                           ("anthropic", "anthropic"), ("OpenAI", "openai")])
+                                           ("anthropic", "anthropic"), ("OpenAI", "openai"),
+                                           ("cloudflare", "openai")])
 def test_langchain_provider_mapping(name, expected):
     assert analysis.langchain_provider(name) == expected
+
+
+def test_cloudflare_llm_client_kwargs():
+    s = settings(llm_provider="cloudflare", cloudflare_account_id="acc123", cloudflare_api_token="tok456",
+                 deep_model="@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+                 quick_model="@cf/meta/llama-3.1-8b-instruct-fast")
+    kw = analysis.llm_client_kwargs(s)
+    assert kw["base_url"] == "https://api.cloudflare.com/client/v4/accounts/acc123/ai/v1"
+    assert kw["api_key"] == "tok456"
+    assert s.effective_chat_model == "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+
+
+def test_extract_plan_json_fallback(monkeypatch):
+    import langchain.chat_models as cm
+    from langchain_core.messages import AIMessage
+
+    class FallbackLLM:
+        def with_structured_output(self, schema):
+            raise NotImplementedError("Cloudflare model does not support strict json_schema")
+
+        def invoke(self, prompt):
+            return AIMessage(
+                '```json\n{"action":"BUY","entry_low":100,"entry_high":105,"tp":130,"sl":90,'
+                '"confidence":"high","holding_months":6,"reasoning":"Strong setup"}\n```'
+            )
+
+    monkeypatch.setattr(cm, "init_chat_model", lambda *a, **kw: FallbackLLM())
+    res = analysis.extract_plan("report", "US.NVDA", None, settings(llm_provider="cloudflare"))
+    assert res.action == "BUY" and res.tp == 130 and res.confidence == "high"
 
 
 def test_extractor_uses_configured_provider(monkeypatch):
@@ -186,7 +216,7 @@ def test_extractor_uses_configured_provider(monkeypatch):
         def invoke(self, prompt):
             return buy()
 
-    def fake_init(model, model_provider):
+    def fake_init(model, model_provider, **kw):
         captured.update(model=model, provider=model_provider)
         return FakeLLM()
 

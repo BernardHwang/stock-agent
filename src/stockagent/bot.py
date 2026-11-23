@@ -8,9 +8,8 @@ from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ChatAction, ParseMode
 from telegram.ext import Application, ApplicationBuilder, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
-from .analysis import load_report, report_section
 from .chat import ChatEngine, ChatReply
-from .messages import FOOTER, chunk_text, format_plan_list, format_status
+from .messages import FOOTER, chunk_text, format_plan_list, format_status, render_telegram_html
 from .store import Store
 from .symbols import normalize_ticker
 
@@ -21,29 +20,27 @@ PRIORITY_CANDIDATE = 3
 
 
 # Shown in Telegram's "/" menu (registered at startup) and in /help.
+# Only quick-check commands live in "/" — analysis, reasoning, and watchlist management happen in natural chat.
 BOT_COMMANDS = [
-    ("plan", "Analyse a stock now, e.g. /plan NVDA"),
-    ("why", "Why the agent said what it said, e.g. /why MDB"),
-    ("ask", "Ask about a stock, e.g. /ask MDB why not sell?"),
-    ("plans", "Active plans"),
-    ("holdings", "Your moomoo positions and their levels"),
-    ("watch", "Add a ticker to the weekly analysis"),
-    ("unwatch", "Remove a ticker from the weekly analysis"),
+    ("holdings", "Your moomoo positions and their target levels"),
+    ("plans", "Active trade plans"),
     ("status", "Service health and AI usage"),
-    ("help", "List commands"),
+    ("help", "How to talk to your advisor & quick commands"),
 ]
 
-HELP = """Just message me in plain words, e.g. 'market dropped, good time to add MDB?'
-Reply to any alert to ask about it.
+HELP = """Talk to me in plain words like your personal financial advisor:
+• "Market dropped today, is it a good time to add MDB?"
+• "Run a full deep analysis on NVDA"
+• "Why did the latest analysis say to hold AMD?"
+• "Add TSM to my weekly watchlist"
+• "How is my portfolio balanced right now?"
+Reply to any alert or daily briefing to discuss it.
 
-<b>Commands</b>
-/plan TICKER: analyse a stock now (e.g. /plan NVDA, /plan 0700.HK, /plan 0166.KL)
-/why TICKER: the reasoning behind the latest analysis
-/ask TICKER question: ask about a stock (e.g. /ask MDB why not sell everything?)
-/plans: active plans
-/holdings: your moomoo positions and their levels
-/watch TICKER, /unwatch TICKER: extra tickers for the weekly analysis
-/status: service health and AI usage"""
+<b>Quick-check commands</b>
+/holdings: your moomoo positions and their target levels
+/plans: active trade plans
+/status: service health and AI usage
+/help: show this guide"""
 
 
 class BotCommands:
@@ -84,7 +81,9 @@ class BotCommands:
             markup = InlineKeyboardMarkup([[InlineKeyboardButton(f"Run full analysis on {code} (~5 min)",
                                                                  callback_data=f"deep:{code}")]
                                            for code in result.offer_deep])
-        await self._reply(update, f"{escape(result.text)}\n\n{FOOTER}", reply_markup=markup)
+        rendered = render_telegram_html(result.text)
+        body = f"{rendered}\n\n{FOOTER}" if FOOTER else rendered
+        await self._reply(update, body, reply_markup=markup)
 
     async def text(self, update: Any, context: Any) -> None:
         if not self._is_owner(update) or update.message is None or not update.message.text:
@@ -105,84 +104,8 @@ class BotCommands:
             f"Queued {escape(code)} (#{position} in line)."
         await query.message.reply_text(f"{status} I'll follow up here when it's done.", parse_mode=ParseMode.HTML)
 
-    async def _ticker_arg(self, update: Any, context: Any, usage: str) -> str | None:
-        if not context.args:
-            await self._reply(update, f"Usage: {usage}")
-            return None
-        code = normalize_ticker(context.args[0])
-        if code is None:
-            await self._reply(update, f"I don't recognise the ticker {escape(context.args[0])}. "
-                                      "Try NVDA, 0700.HK or 0166.KL.")
-        return code
-
     def watchlist(self) -> list[str]:
         return json.loads(self.store.kv_get("watchlist") or "[]")
-
-    def _set_watchlist(self, codes: list[str]) -> None:
-        self.store.kv_set("watchlist", json.dumps(sorted(set(codes))))
-
-    async def plan(self, update: Any, context: Any) -> None:
-        if not self._is_owner(update):
-            return
-        code = await self._ticker_arg(update, context, "/plan TICKER")
-        if code is None:
-            return
-        self.store.enqueue(code, "plan_cmd", PRIORITY_PLAN_CMD, self.now())
-        position = next(i for i, it in enumerate(self.store.pending_items(), 1) if it.code == code)
-        await self._reply(update, f"Queued {escape(code)} (#{position} in line). The plan will arrive here when "
-                                  "the analysis finishes, usually within a few minutes.")
-        await self.kick_queue()
-
-    @staticmethod
-    def _no_report(context: Any) -> str:
-        return (f"There's no analysis saved for that stock yet. Send /plan {escape(context.args[0].upper())} "
-                "first, then ask again.")
-
-    async def why(self, update: Any, context: Any) -> None:
-        if not self._is_owner(update):
-            return
-        code = await self._ticker_arg(update, context, "/why TICKER")
-        if code is None:
-            return
-        saved = load_report(self.store, code)
-        if saved is None:
-            await self._reply(update, self._no_report(context))
-            return
-        at, report = saved.at.isoformat(timespec="minutes"), saved.text
-        plan = self.store.active_plan(code)
-        parts = [f"<b>Why: {escape(code)}</b> (analysis from {escape(at)} UTC)"]
-        if plan:
-            parts.append(f"Plan #{plan.id}: {plan.fields.action.value}, {escape(plan.fields.reasoning)}")
-        parts += ["", escape(report_section(report, "Final decision") or report[:3500]), "",
-                  f"Ask a follow-up with /ask {escape(context.args[0].upper())} your question", FOOTER]
-        await self._reply(update, "\n".join(parts))
-
-    async def ask(self, update: Any, context: Any) -> None:
-        if not self._is_owner(update):
-            return
-        if len(context.args or []) < 2:
-            await self._reply(update, "Usage: /ask TICKER your question (e.g. /ask MDB why not sell everything?)")
-            return
-        code = await self._ticker_arg(update, context, "/ask TICKER question")
-        if code is None:
-            return
-        await self._chat(update, context, f"About {code}: {' '.join(context.args[1:])}")
-
-    async def watch(self, update: Any, context: Any) -> None:
-        if not self._is_owner(update):
-            return
-        code = await self._ticker_arg(update, context, "/watch TICKER")
-        if code:
-            self._set_watchlist([*self.watchlist(), code])
-            await self._reply(update, f"Added {escape(code)} to the weekly analysis.")
-
-    async def unwatch(self, update: Any, context: Any) -> None:
-        if not self._is_owner(update):
-            return
-        code = await self._ticker_arg(update, context, "/unwatch TICKER")
-        if code:
-            self._set_watchlist([c for c in self.watchlist() if c != code])
-            await self._reply(update, f"Removed {escape(code)}.")
 
     async def plans(self, update: Any, context: Any) -> None:
         if self._is_owner(update):
@@ -193,16 +116,21 @@ class BotCommands:
             return
         positions = self.store.last_positions()
         if not positions:
-            await self._reply(update, "No positions found in moomoo (or not synced yet).")
+            await self._reply(
+                update, "💼 <b>Your Holdings</b>\n\n<i>No positions found in moomoo (or not synced yet).</i>"
+            )
             return
-        lines = ["<b>Holdings</b>"]
+        lines = ["💼 <b>Your Holdings</b>", ""]
         for p in positions:
             plan = self.store.active_plan(p.code)
             if plan and plan.fields.tp and plan.fields.sl:
-                lv = f"TP {plan.fields.tp:.2f} · SL {plan.fields.sl:.2f}"
+                lv = f"TP <code>{plan.fields.tp:.2f}</code> · SL <code>{plan.fields.sl:.2f}</code>"
             else:
-                lv = "no plan yet"
-            lines.append(f"{escape(p.code)}: {p.qty:g} @ {p.avg_cost:.2f} · {lv}")
+                lv = "<i>no plan yet</i>"
+            lines.append(
+                f"• <b><code>{escape(p.code)}</code></b>: <code>{p.qty:g}</code> shares @ "
+                f"<code>{p.avg_cost:.2f}</code>\n   {lv}"
+            )
         await self._reply(update, "\n".join(lines))
 
     async def status(self, update: Any, context: Any) -> None:

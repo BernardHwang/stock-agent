@@ -15,8 +15,9 @@ You place every order yourself in the moomoo app.
 
 | When (MYT) | What |
 |---|---|
-| Sun 10:00 | Screen the tech universe (`config/universe.yaml`, rules in `config/screener.yaml`), queue the top candidates and your `/watch` list for AI analysis |
+| Sun 10:00 | Screen the tech universe (`config/universe.yaml`, rules in `config/screener.yaml`), queue the top candidates and your watchlist for AI analysis |
 | Mon 20:00 | Queue a review of every stock you hold |
+| Tue–Sat 08:30 | Daily morning briefing after US market close: index moves, holdings day change & P/L, news, and automatic deep plan re-review if a holding moved >=5% or had major news |
 | Every 15 min | Read your positions from moomoo; link buys to plans, close plans you sold, queue analysis for holdings without a plan |
 | Every 30 min | Check news on held stocks; major news queues an urgent re-review |
 | Live | Price alerts: entered buy zone, partial TP, TP, SL (each once per plan) |
@@ -46,14 +47,11 @@ stock"). Ask "what do you remember about MDB?" or say "forget that"; forgotten n
 `CHAT_MAX_PER_DAY` (1000) is a safety cap on chat AI calls (each lookup round counts); you get a heads-up at 90%.
 It is separate from `MAX_RUNS_PER_DAY`, which still caps deep analyses.
 
-## Telegram commands
+## Quick-check Telegram commands
 
-`/plan NVDA` · `/plan 0700.HK` · `/plan 0166.KL` · `/why MDB` · `/ask MDB why not sell everything?` · `/plans` ·
-`/holdings` · `/watch TICKER` · `/unwatch TICKER` · `/status` · `/help`. Only your `TELEGRAM_CHAT_ID` is answered.
+`/holdings` · `/plans` · `/status` · `/help`. Only your `TELEGRAM_CHAT_ID` is answered.
 The commands are registered in Telegram's "/" menu each time the service starts.
-
-`/why` shows the reasoning from the latest saved analysis; `/ask MDB question` is the same as asking about MDB
-in plain words.
+Everything else—requesting a deep analysis, asking why an analysis made a call, or adding/removing tickers on your watchlist—is done simply by talking to your advisor in plain words.
 
 ## Setup (local trial on Windows)
 

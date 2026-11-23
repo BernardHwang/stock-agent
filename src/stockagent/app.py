@@ -22,6 +22,7 @@ from .health import Health
 from .holdings import sync_holdings
 from .lifecycle import expire_stale
 from .messages import (
+    format_daily_summary,
     format_health,
     format_info,
     format_level_alert,
@@ -30,9 +31,9 @@ from .messages import (
 )
 from .models import Alert, PlanState
 from .moomoo_gw import MoomooGateway
-from .news import poll_news, yf_news
+from .news import is_major, poll_news, yf_news
 from .outcomes import update_outcomes
-from .pricefeed import PriceFeed, make_feed, yf_index_moves, yf_last_prices
+from .pricefeed import PriceFeed, make_feed, yf_day_moves, yf_index_moves, yf_last_prices
 from .rules import RuleEngine
 from .screener import screen, yf_fetch
 from .store import Store
@@ -273,6 +274,79 @@ class App:
                          "ret_26w": o.get("ret_26w")})
         await self.notify(format_weekly_summary(rows))
 
+    async def daily_summary(self) -> None:
+        """Morning briefing after US market close: recap holdings/plans & auto-queue reviews on big moves."""
+        positions = self.store.last_positions()
+        plans = self.store.active_plans()
+        codes = sorted({p.code for p in positions} | {p.code for p in plans})
+        try:
+            indices = await asyncio.to_thread(yf_index_moves)
+        except Exception:
+            indices = {}
+        try:
+            prices = await asyncio.to_thread(self.prices, codes) if codes else {}
+        except Exception:
+            prices = {}
+        try:
+            day_moves = await asyncio.to_thread(yf_day_moves, codes) if codes else {}
+        except Exception:
+            day_moves = {}
+
+        auto_queued: list[str] = []
+        holdings_rows: list[dict[str, Any]] = []
+        for pos in positions:
+            price = prices.get(pos.code)
+            day_move = day_moves.get(pos.code)
+            plan = self.store.active_plan(pos.code)
+            try:
+                news_items = await asyncio.to_thread(yf_news, pos.code)
+            except Exception:
+                news_items = []
+            headlines = [i["title"] for i in news_items[:3]]
+            has_major_news = any(is_major(t) for t in headlines)
+            big_move = day_move is not None and abs(day_move) >= self.settings.daily_move_pct
+            if (big_move or has_major_news) and self._enqueue_once_per_day(
+                pos.code, "daily_move", f"daily_review:{pos.code}"
+            ):
+                auto_queued.append(pos.code)
+            holdings_rows.append({
+                "code": pos.code,
+                "qty": pos.qty,
+                "avg_cost": pos.avg_cost,
+                "price": price,
+                "day_move_pct": round(day_move * 100, 1) if day_move is not None else None,
+                "pnl_pct": round((price / pos.avg_cost - 1) * 100, 1) if price and pos.avg_cost else None,
+                "tp": plan.fields.tp if plan else None,
+                "sl": plan.fields.sl if plan else None,
+                "headlines": headlines,
+            })
+
+        open_plans = [
+            {
+                "code": p.code,
+                "state": p.state.value,
+                "price": prices.get(p.code),
+                "day_move_pct": round(day_moves[p.code] * 100, 1) if p.code in day_moves else None,
+                "entry_low": p.fields.entry_low,
+                "entry_high": p.fields.entry_high,
+                "tp": p.fields.tp,
+                "sl": p.fields.sl,
+            }
+            for p in plans
+            if p.state != PlanState.HELD
+        ]
+        snapshot: dict[str, Any] = {
+            "indices": indices,
+            "holdings": holdings_rows,
+            "open_plans": open_plans,
+            "watchlist": self.commands.watchlist(),
+            "auto_queued_reviews": auto_queued,
+        }
+        briefing = await self.chat.daily_briefing(snapshot)
+        await self.notify(format_daily_summary(snapshot, briefing))
+        if auto_queued:
+            await self.kick_queue()
+
     async def opend_health(self) -> None:
         reason = await asyncio.to_thread(self.gateway.health_check)
         if reason:
@@ -302,6 +376,7 @@ class App:
         return [
             ("weekly_screen", CronTrigger(day_of_week="sun", hour=10, timezone=tz)),
             ("holdings_review", CronTrigger(day_of_week="mon", hour=20, timezone=tz)),
+            ("daily_summary", CronTrigger(day_of_week="tue-sat", hour=8, minute=30, timezone=tz)),
             ("drain_queue", IntervalTrigger(minutes=30, timezone=tz)),
             ("holdings_sync", IntervalTrigger(minutes=15, timezone=tz)),
             ("news_poll", IntervalTrigger(minutes=30, timezone=tz)),

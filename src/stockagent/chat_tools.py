@@ -19,8 +19,9 @@ from .symbols import market_of, normalize_ticker
 log = logging.getLogger(__name__)
 
 TOOL_NAMES: tuple[str, ...] = (
-    "get_quotes", "get_portfolio", "refresh_positions", "get_stock_context", "get_news", "get_market_overview",
-    "list_notes", "add_note", "forget_note", "restore_note", "queue_deep_analysis", "offer_deep_analysis",
+    "get_quotes", "get_portfolio", "refresh_positions", "get_stock_context", "get_full_report", "get_news",
+    "get_market_overview", "list_notes", "add_note", "forget_note", "restore_note", "get_watchlist",
+    "add_to_watchlist", "remove_from_watchlist", "list_active_plans", "queue_deep_analysis", "offer_deep_analysis",
 )
 
 SUMMARY_MAX = 3000
@@ -128,6 +129,9 @@ class ChatToolbox:
     async def get_stock_context(self, ticker: str) -> dict:
         code = self._code(ticker)
         held = next((p for p in self.store.last_positions() if p.code == code), None)
+        positions = self.store.last_positions()
+        total_cost = sum(p.qty * p.avg_cost for p in positions)
+        weight_pct = round(held.qty * held.avg_cost / total_cost * 100, 1) if held and total_cost else None
         plan = self.store.active_plan(code)
         report = load_report(self.store, code)
         price = (await self._prices_or_empty([code])).get(code)
@@ -138,9 +142,13 @@ class ChatToolbox:
         reason = deep_reason(report, price, news, self.now(), self.settings.deep_stale_days,
                              self.settings.deep_move_pct)
         summary = (report_section(report.text, "Final decision") or report.text) if report else None
+        held_dict = None
+        if held:
+            pnl_pct = round((price / held.avg_cost - 1) * 100, 1) if price and held.avg_cost else None
+            held_dict = {**held.model_dump(), "pnl_pct": pnl_pct, "approx_weight_pct": weight_pct}
         return {
             "code": code,
-            "held": held.model_dump() if held else None,
+            "held": held_dict,
             "plan": ({"id": plan.id, "state": plan.state.value, "created_at": plan.created_at,
                       **plan.fields.model_dump(mode="json")} if plan else None),
             "analysis_at": report.at if report else None,
@@ -152,6 +160,15 @@ class ChatToolbox:
             "notes": [{"id": n.id, "at": n.at, "text": n.text} for n in self.store.notes(code)],
             "lookalike": similar_codes(code, self._known_codes()),
         }
+
+    @_tool
+    async def get_full_report(self, ticker: str) -> dict:
+        code = self._code(ticker)
+        report = load_report(self.store, code)
+        if report is None:
+            return {"code": code, "report": None, "note": "No deep analysis saved yet for this stock."}
+        return {"code": code, "analysis_at": report.at, "price_at_analysis": report.price,
+                "report": report.text[:6000]}
 
     @_tool
     async def get_news(self, ticker: str) -> dict:
@@ -181,6 +198,33 @@ class ChatToolbox:
     @_tool
     async def restore_note(self, note_id: int) -> dict:
         return {"ok": self.store.set_note_active(note_id, True)}
+
+    @_tool
+    async def get_watchlist(self) -> dict:
+        watch = json.loads(self.store.kv_get("watchlist") or "[]")
+        return {"watchlist": list(watch)}
+
+    @_tool
+    async def add_to_watchlist(self, ticker: str) -> dict:
+        code = self._code(ticker)
+        watch = json.loads(self.store.kv_get("watchlist") or "[]")
+        updated = sorted(set([*watch, code]))
+        self.store.kv_set("watchlist", json.dumps(updated))
+        return {"added": code, "watchlist": updated}
+
+    @_tool
+    async def remove_from_watchlist(self, ticker: str) -> dict:
+        code = self._code(ticker)
+        watch = json.loads(self.store.kv_get("watchlist") or "[]")
+        updated = [c for c in watch if c != code]
+        self.store.kv_set("watchlist", json.dumps(updated))
+        return {"removed": code, "watchlist": updated}
+
+    @_tool
+    async def list_active_plans(self) -> dict:
+        plans = self.store.active_plans()
+        return {"plans": [{"id": p.id, "code": p.code, "state": p.state.value, "created_at": p.created_at,
+                           **p.fields.model_dump(mode="json")} for p in plans]}
 
     @_tool
     async def queue_deep_analysis(self, ticker: str) -> dict:

@@ -154,11 +154,16 @@ async def test_bad_tool_args_become_error(store):
     assert "error" in json.loads(tool_msg.content)
 
 
-async def test_owner_notes_in_system_prompt(store):
+async def test_owner_notes_and_portfolio_in_system_prompt(store):
+    from stockagent.models import Position
     store.add_note(None, "I don't short", NOW)
+    store.save_positions([Position(code="US.NVDA", qty=10, avg_cost=120)], NOW)
     eng, llm = engine(store, [AIMessage("ok")])
     await eng.reply("hi")
-    assert "I don't short" in llm.calls[0][0].content
+    sys_text = llm.calls[0][0].content
+    assert "I don't short" in sys_text
+    assert "US.NVDA: 10 shares @ 120.00" in sys_text
+    assert "personal financial advisor" in sys_text
 
 
 async def test_follow_up(store):

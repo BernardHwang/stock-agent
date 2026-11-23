@@ -124,3 +124,17 @@ def yf_index_moves(history: Callable[[str], list[float]] = _daily_closes) -> dic
         if len(closes) >= 2 and closes[-2]:
             out[sym] = round(closes[-1] / closes[-2] - 1, 4)
     return out
+
+
+def yf_day_moves(codes: list[str], history: Callable[[str], list[float]] = _daily_closes) -> dict[str, float]:
+    """1-day percentage change (as a fraction) for each ticker code from the last two daily closes."""
+    out: dict[str, float] = {}
+    for code in codes:
+        try:
+            closes = history(to_yf(code))
+        except Exception:
+            log.info("no history for %s", code)
+            continue
+        if len(closes) >= 2 and closes[-2]:
+            out[code] = round(closes[-1] / closes[-2] - 1, 4)
+    return out

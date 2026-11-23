@@ -1,77 +1,92 @@
-# Deploying to Oracle Cloud Always Free
+# Deploying to Oracle Cloud Always Free (Single VM + Internal Docker Network)
 
-Two free VMs in one virtual network:
+Both **moomoo OpenD** and **stockagent** run together in a single `docker-compose.yml` connected by a private Docker bridge network (`stocknet`).
+- **Zero exposed ports**: OpenD has **no ports published** to the host or internet (`11111` and `22222` are completely unreachable from outside Docker). Only `stockagent` can talk to `opend:11111` inside `stocknet`.
+- **No passwords in Git**: Your moomoo login lives only in `.env` on the server (`MOOMOO_LOGIN_ACCOUNT` and `MOOMOO_LOGIN_PWD_MD5`). The `opend` container generates `OpenD.xml` in memory at startup.
 
-| VM | Shape | Runs |
-|---|---|---|
-| **A** | VM.Standard.E2.1.Micro (AMD, 1 GB) | moomoo OpenD (x86-64 only) |
-| **B** | VM.Standard.A1.Flex (ARM, e.g. 2 OCPU / 12 GB) | stockagent (Docker) |
+## 1. Create One Always Free VM
 
-If moomoo later ships an ARM build of OpenD, you can run both on VM B.
+1. Sign up at [cloud.oracle.com](https://cloud.oracle.com) (Always Free resources are not charged).
+2. Create one **Ubuntu 24.04** VM:
+   - **Recommended**: `VM.Standard.A1.Flex` (ARM, e.g. **2–4 OCPU / 12–24 GB RAM**, Always Free). Docker will run the `x86-64` OpenD container automatically via `qemu-user-static`.
+   - **Alternative**: `VM.Standard.E2.1.Micro` (AMD x86-64, 1 GB RAM + 2 GB swap file).
+3. **Firewall (Security List)**: Only allow **SSH (port 22)** from your IP. You do **not** need to open port `11111` anywhere.
 
-## 1. Create the VMs
+## 2. Install Docker (and x86 emulation if on an ARM VM)
 
-1. Sign up at cloud.oracle.com (card needed for identity; Always Free resources are not charged).
-2. Create a VCN with the wizard ("VCN with Internet Connectivity").
-3. Create VM A and VM B with **Ubuntu 24.04** in that VCN's public subnet, with your SSH key.
-4. Note each VM's **private IP** (e.g. `10.0.0.10` for A, `10.0.0.20` for B).
-
-## 2. Firewall (security list)
-
-Ingress rules only:
-
-| Source | Port | Why |
-|---|---|---|
-| your home IP `/32` | 22 | SSH |
-| VM B private IP `/32` | 11111 | stockagent → OpenD |
-
-Nothing else. OpenD must never be reachable from the internet. Ubuntu images on Oracle also have
-iptables rules; on VM A allow the port from VM B:
-
-```bash
-sudo iptables -I INPUT -p tcp -s 10.0.0.20 --dport 11111 -j ACCEPT
-sudo netfilter-persistent save
-```
-
-## 3. OpenD on VM A
-
-1. Download the **command-line OpenD for Ubuntu** from moomoo's OpenAPI page and copy it to `/opt/opend`.
-2. Create a service user: `sudo useradd --system opend && sudo chown -R opend /opt/opend`.
-3. Edit `/opt/opend/OpenD.xml`: login account and password (as the current OpenD release documents),
-   `api_ip` = VM A's private IP, `api_port` = 11111, `telnet_ip` = 127.0.0.1, `telnet_port` = 22222.
-4. First start in the foreground to complete the SMS verification: `cd /opt/opend && ./OpenD`.
-5. Install the service: `sudo cp deploy/opend.service /etc/systemd/system/ && sudo systemctl enable --now opend`.
-
-### When Telegram says "OpenD not logged in. It may need SMS verification."
-
-```bash
-ssh ubuntu@VM_A
-telnet 127.0.0.1 22222
-req_phone_verify_code          # moomoo sends an SMS
-input_phone_verify_code -code=123456
-```
-
-Live prices and holdings sync pause until this is done. Analyses and scheduled jobs keep running.
-
-## 4. stockagent on VM B
+SSH into your VM and run:
 
 ```bash
 sudo apt-get update && sudo apt-get install -y docker.io docker-compose-v2 git
+# If your VM is ARM (VM.Standard.A1.Flex), install binfmt/qemu so it can run the x86-64 OpenD binary:
+if [ "$(uname -m)" = "aarch64" ]; then
+  sudo apt-get install -y qemu-user-static binfmt-support
+fi
 sudo usermod -aG docker $USER && newgrp docker
+```
+
+## 3. Clone & Configure `.env`
+
+```bash
 git clone https://github.com/BernardHwang/stock-agent.git && cd stock-agent
-cp .env.example .env && nano .env      # MOOMOO_HOST = VM A private IP, plus keys and Telegram
-mkdir -p data/tradingagents && sudo chown -R 1000:1000 data
+cp .env.example .env
+```
+
+Generate the MD5 hash of your moomoo password (so your plaintext password isn't stored):
+
+```bash
+echo -n 'YOUR_MOOMOO_PASSWORD' | md5sum
+```
+
+Edit `.env` (`nano .env`) and fill in:
+- `MOOMOO_LOGIN_ACCOUNT` = your moomoo phone / email / user ID
+- `MOOMOO_LOGIN_PWD_MD5` = the 32-character lowercase MD5 string from above
+- `TELEGRAM_BOT_TOKEN` & `TELEGRAM_CHAT_ID`
+- Your AI provider block (e.g. **Cloudflare Workers AI** or **Google Gemini** below)
+
+Create the data directories and start both containers:
+
+```bash
+mkdir -p data/tradingagents data/opend && sudo chown -R 1000:1000 data
 docker compose -f deploy/docker-compose.yml up -d --build
 docker compose -f deploy/docker-compose.yml logs -f
 ```
 
-You should get "Stock agent started" in Telegram. Send `/status`.
+### When Telegram says "OpenD not logged in. It may need SMS verification."
 
-Update later: `git pull && docker compose -f deploy/docker-compose.yml up -d --build`.
+On your first login from a new server (or occasionally when moomoo requests device verification), run `telnet` **inside** the isolated `opend` container:
 
-## 5. Switching to a paid AI model
+```bash
+docker compose -f deploy/docker-compose.yml exec opend telnet 127.0.0.1 22222
+req_phone_verify_code          # moomoo sends an SMS to your phone
+input_phone_verify_code -code=123456
+```
 
-In `.env`, replace the model block. Example for OpenAI:
+Because `data/opend` is mounted as a persistent volume, OpenD remembers the verified device token across container restarts!
+
+## 4. Using Cloudflare Workers AI (Free Tier) or Paid AI Models
+
+In `.env`, replace the model block.
+
+Example for **Cloudflare Workers AI (Free 10,000 Neurons/day)**:
+1. In the [Cloudflare Dashboard](https://dash.cloudflare.com/), copy your **Account ID** and create an API Token with **Workers AI Read** permission.
+2. Put this block in `.env`:
+
+```
+LLM_PROVIDER=cloudflare
+DEEP_MODEL=@cf/meta/llama-3.3-70b-instruct-fp8-fast
+QUICK_MODEL=@cf/meta/llama-3.1-8b-instruct-fast
+CLOUDFLARE_ACCOUNT_ID=your-cloudflare-account-id
+CLOUDFLARE_API_TOKEN=your-cloudflare-workers-ai-token
+MAX_DEBATE_ROUNDS=1
+MAX_RISK_DISCUSS_ROUNDS=1
+MAX_CANDIDATES=4
+MAX_RUNS_PER_DAY=4
+```
+
+(`DEEP_MODEL` powers your Telegram financial advisor chat and final investment decisions on Llama 3.3 70B, while `QUICK_MODEL` uses Llama 3.1 8B Fast for the intermediate data analysts so you can run 4–5 full deep analyses + daily chat inside the 10,000 free Neurons/day limit.)
+
+Example for OpenAI:
 
 ```
 LLM_PROVIDER=openai

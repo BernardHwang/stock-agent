@@ -50,11 +50,12 @@ def held_plan(store):
 
 def test_job_schedule(app):
     names = {name for name, _ in app.jobs()}
-    assert names == {"weekly_screen", "holdings_review", "drain_queue", "holdings_sync", "news_poll",
-                     "expire_stale", "outcomes", "weekly_summary", "opend_health"}
+    assert names == {"weekly_screen", "holdings_review", "daily_summary", "drain_queue", "holdings_sync",
+                     "news_poll", "expire_stale", "outcomes", "weekly_summary", "opend_health"}
     triggers = dict(app.jobs())
     assert "sun" in str(triggers["weekly_screen"]) and "hour='10'" in str(triggers["weekly_screen"])
     assert "mon" in str(triggers["holdings_review"]) and "hour='20'" in str(triggers["holdings_review"])
+    assert "tue-sat" in str(triggers["daily_summary"]) and "hour='8'" in str(triggers["daily_summary"])
 
 
 async def test_job_exception_alerts_once_and_continues(app):
@@ -199,3 +200,22 @@ async def test_queue_deep_while_running_does_not_duplicate(app):
     app.store.next_queue_item()  # now running
     assert await app.queue_deep("US.MDB") == 0
     assert app.store.pending_items() == []
+
+
+async def test_daily_summary_queues_big_mover_and_notifies(app, monkeypatch):
+    held_plan(app.store)
+    app.store.save_positions([Position(code="US.NVDA", qty=10, avg_cost=100)], NOW)
+    monkeypatch.setattr("stockagent.app.yf_index_moves", lambda: {"SPY": 0.01, "QQQ": 0.015})
+    monkeypatch.setattr("stockagent.app.yf_day_moves", lambda codes: {"US.NVDA": -0.062})
+    monkeypatch.setattr("stockagent.app.yf_news", lambda code: [])
+    app.prices = lambda codes: {"US.NVDA": 110.0}
+
+    async def fake_briefing(snapshot):
+        assert snapshot["auto_queued_reviews"] == ["US.NVDA"]
+        return "NVDA dropped 6.2% today; queued a fresh plan review."
+
+    app.chat.daily_briefing = fake_briefing
+    await app.daily_summary()
+    assert any("NVDA dropped 6.2%" in m for m in app.sent)
+    item = app.store.next_queue_item()
+    assert item.code == "US.NVDA" and item.reason == "daily_move" and item.priority == 0

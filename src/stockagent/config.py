@@ -14,11 +14,24 @@ class Settings(BaseSettings):
     moomoo_security_firm: str = "FUTUMY"
     markets: list[str] = ["US"]
 
-    # Provider names follow TradingAgents: "google", "anthropic", "openai", "openrouter", ...
+    # Provider names follow TradingAgents: "google", "anthropic", "openai", "openrouter", "cloudflare", ...
     llm_provider: str = "google"
     deep_model: str = "gemini-3.8-flash"
     quick_model: str = "gemini-3.5-flash-lite"
+    # Optional override for Telegram chat (defaults to deep_model on cloudflare, else quick_model)
+    chat_model: str | None = None
     google_api_key: SecretStr | None = None
+    cloudflare_account_id: str | None = None
+    cloudflare_api_token: SecretStr | None = None
+    openai_base_url: str | None = None
+
+    @property
+    def effective_chat_model(self) -> str:
+        if self.chat_model:
+            return self.chat_model
+        if self.llm_provider.lower() == "cloudflare":
+            return self.deep_model
+        return self.quick_model
 
     telegram_bot_token: SecretStr
     telegram_chat_id: int
@@ -36,6 +49,7 @@ class Settings(BaseSettings):
     chat_history: int = 20
     deep_stale_days: int = 7
     deep_move_pct: float = 0.08
+    daily_move_pct: float = 0.05  # 1-day move on a held stock that triggers a plan re-review in the daily summary
 
     price_source: Literal["moomoo", "poll"] = "moomoo"
     poll_interval_s: int = 300

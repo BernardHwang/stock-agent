@@ -139,3 +139,38 @@ async def test_queue_reports_already_running(store):
     f.queue = running
     out = await call(toolbox(store, f), "queue_deep_analysis", ticker="MDB")
     assert out["already_running"] is True
+
+
+async def test_watchlist_and_plans_tools(store):
+    from stockagent.models import Plan, PlanFields, PlanState
+    tb = toolbox(store, Fakes())
+    assert (await call(tb, "get_watchlist"))["watchlist"] == []
+    added = await call(tb, "add_to_watchlist", ticker="NVDA")
+    assert added["watchlist"] == ["US.NVDA"]
+    assert (await call(tb, "get_watchlist"))["watchlist"] == ["US.NVDA"]
+    removed = await call(tb, "remove_from_watchlist", ticker="NVDA")
+    assert removed["watchlist"] == []
+
+    f = PlanFields(action="BUY", entry_low=100, entry_high=105, tp=130, sl=90, confidence="high",
+                   holding_months=6, reasoning="AI growth")
+    store.save_plan(Plan(code="US.NVDA", fields=f, state=PlanState.OPEN, created_at=NOW, source="chat"))
+    plans = await call(tb, "list_active_plans")
+    assert len(plans["plans"]) == 1 and plans["plans"][0]["code"] == "US.NVDA"
+
+
+async def test_stock_context_includes_pnl_and_weight_for_holding(store):
+    store.save_positions([Position(code="US.NVDA", qty=10, avg_cost=100),
+                          Position(code="US.MDB", qty=5, avg_cost=200)], NOW)
+    out = await call(toolbox(store, Fakes({"US.NVDA": 125.0})), "get_stock_context", ticker="NVDA")
+    assert out["held"]["pnl_pct"] == 25.0
+    assert out["held"]["approx_weight_pct"] == 50.0
+
+
+async def test_get_full_report_tool(store):
+    from stockagent.analysis import save_report
+    tb = toolbox(store, Fakes())
+    empty = await call(tb, "get_full_report", ticker="NVDA")
+    assert empty["report"] is None
+    save_report(store, "US.NVDA", "## Final decision\nStrong buy on AI demand.", NOW, price=120.0)
+    saved = await call(tb, "get_full_report", ticker="NVDA")
+    assert "Strong buy on AI demand." in saved["report"] and saved["price_at_analysis"] == 120.0

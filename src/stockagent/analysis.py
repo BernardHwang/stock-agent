@@ -4,6 +4,7 @@ import asyncio
 import copy
 import json
 import logging
+import os
 import re
 import sys
 from collections.abc import Awaitable, Callable
@@ -28,21 +29,40 @@ RunFn = Callable[[str, str, Settings], str]
 ExtractFn = Callable[[str, str, Position | None, Settings], PlanFields]
 
 # TradingAgents provider name -> langchain init_chat_model provider name
-_LC_PROVIDER = {"google": "google_genai"}
+_LC_PROVIDER = {"google": "google_genai", "cloudflare": "openai"}
 
-EXTRACT_PROMPT = """You turn an equity research report into a trade plan for a long-only investor.
-The investor holds positions for 3-12 months and targets at least 20% gain per year.
-They place every order themselves; you only advise.
+
+def llm_client_kwargs(settings: Settings) -> dict[str, Any]:
+    """Extra kwargs for init_chat_model when using OpenAI-compatible endpoints like Cloudflare Workers AI."""
+    kw: dict[str, Any] = {}
+    if settings.llm_provider.lower() == "cloudflare":
+        if settings.cloudflare_account_id:
+            kw["base_url"] = (
+                f"https://api.cloudflare.com/client/v4/accounts/{settings.cloudflare_account_id}/ai/v1"
+            )
+        if settings.cloudflare_api_token:
+            kw["api_key"] = settings.cloudflare_api_token.get_secret_value()
+    if settings.openai_base_url:
+        kw["base_url"] = settings.openai_base_url
+    return kw
+
+EXTRACT_PROMPT = """You are a pragmatic, candid personal financial advisor turning an equity research report
+into a clear trade plan for a long-only investor. The investor typically holds positions for 3-12 months and
+targets at least 20% annualized return. They place every order themselves; you advise them as their partner.
 
 Rules:
 - Long-only. Use BUY to open a new position. If the investor already holds the stock, use HOLD, TRIM
-  (take partial profit / reduce) or EXIT instead of BUY.
+  (take partial profit / reduce risk) or EXIT instead of BUY.
 - For BUY: give a buy zone (entry_low..entry_high) near current support or current price, a stop loss below
   a meaningful support level (usually 8-15% below entry), a take-profit sized for at least 20% upside, and
   optionally a partial take-profit in between.
 - For HOLD/TRIM: give updated tp and sl relative to the current price. For EXIT, levels may be empty.
-- If the report does not support a buy, do not invent one: return HOLD with low confidence.
-- All prices in the stock's trading currency. Reasoning: plain English, at most 600 characters.
+- If the report does not support a buy, do not force one: return HOLD with low confidence and explain honestly
+  why waiting or passing is the smarter move.
+- All prices in the stock's trading currency.
+- Reasoning: write directly to the investor in a warm, candid advisor voice ("I'd look to accumulate...",
+  "Since you're already holding at...", "The risk here is..."). Explain the core thesis, key catalyst, and
+  main risk in plain English, at most 600 characters.
 
 Ticker: {code}
 {held}
@@ -59,13 +79,26 @@ def run_tradingagents(symbol: str, day: str, settings: Settings) -> str:
     from tradingagents.default_config import DEFAULT_CONFIG
 
     cfg = copy.deepcopy(DEFAULT_CONFIG)
+    provider = settings.llm_provider
+    extra_cfg: dict[str, Any] = {}
+    if provider.lower() == "cloudflare":
+        provider = "openai"
+        if settings.cloudflare_account_id:
+            extra_cfg["backend_url"] = (
+                f"https://api.cloudflare.com/client/v4/accounts/{settings.cloudflare_account_id}/ai/v1"
+            )
+        if settings.cloudflare_api_token and not os.environ.get("OPENAI_API_KEY"):
+            os.environ["OPENAI_API_KEY"] = settings.cloudflare_api_token.get_secret_value()
+    elif settings.openai_base_url:
+        extra_cfg["backend_url"] = settings.openai_base_url
     cfg.update(
-        llm_provider=settings.llm_provider,
+        llm_provider=provider,
         deep_think_llm=settings.deep_model,
         quick_think_llm=settings.quick_model,
         max_debate_rounds=settings.max_debate_rounds,
         max_risk_discuss_rounds=settings.max_risk_discuss_rounds,
         holding_period_days=90,
+        **extra_cfg,
     )
     graph = TradingAgentsGraph(selected_analysts=("market", "social", "news", "fundamentals"), debug=False,
                                config=cfg)
@@ -80,15 +113,50 @@ def langchain_provider(name: str) -> str:
     return _LC_PROVIDER.get(name.lower(), name.lower())
 
 
+JSON_SCHEMA_HINT = """
+Respond ONLY with a valid JSON object matching this exact schema (no markdown fences or extra text):
+{
+  "action": "BUY" | "HOLD" | "TRIM" | "EXIT",
+  "entry_low": number or null,
+  "entry_high": number or null,
+  "partial_tp": number or null,
+  "tp": number or null,
+  "sl": number or null,
+  "confidence": "low" | "medium" | "high",
+  "holding_months": integer,
+  "reasoning": "string (at most 600 chars)"
+}"""
+
+
+def parse_plan_json(raw_text: str) -> PlanFields:
+    """Extract and validate a PlanFields JSON object from raw LLM output (handles markdown fences)."""
+    cleaned = raw_text.strip()
+    match = re.search(r"\{.*\}", cleaned, re.S)
+    if match:
+        cleaned = match.group(0)
+    return PlanFields.model_validate_json(cleaned)
+
+
 def extract_plan(report: str, code: str, held: Position | None, settings: Settings) -> PlanFields:
     from langchain.chat_models import init_chat_model
 
     provider = langchain_provider(settings.llm_provider)
-    llm = init_chat_model(settings.deep_model, model_provider=provider).with_structured_output(PlanFields)
+    base_llm = init_chat_model(
+        settings.deep_model, model_provider=provider, **llm_client_kwargs(settings)
+    )
     held_line = (f"The investor HOLDS {held.qty:g} shares at average cost {held.avg_cost:.2f}." if held
                  else "The investor does not hold this stock.")
-    result = llm.invoke(EXTRACT_PROMPT.format(code=code, held=held_line, report=report))
-    return result if isinstance(result, PlanFields) else PlanFields.model_validate(result)
+    prompt = EXTRACT_PROMPT.format(code=code, held=held_line, report=report)
+    try:
+        llm = base_llm.with_structured_output(PlanFields)
+        result = llm.invoke(prompt)
+        if result is not None:
+            return result if isinstance(result, PlanFields) else PlanFields.model_validate(result)
+    except Exception:
+        log.info("structured output unsupported or failed for %s; falling back to JSON extraction", code)
+    ai_msg = base_llm.invoke(prompt + "\n" + JSON_SCHEMA_HINT)
+    content = getattr(ai_msg, "content", ai_msg)
+    return parse_plan_json(str(content))
 
 
 class SavedReport(BaseModel):

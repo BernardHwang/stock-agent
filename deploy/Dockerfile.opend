@@ -1,0 +1,28 @@
+# Runs official Moomoo OpenD (x86-64 Linux CLI) inside an isolated Docker container.
+# Also works on Oracle ARM VMs (VM.Standard.A1.Flex) via `platform: linux/amd64` + binfmt/qemu.
+FROM --platform=linux/amd64 ubuntu:24.04
+
+ARG OPEND_VERSION=9.6.5608
+ARG OPEND_URL="https://softwaredownload.futunn.com/FTNN_OpenD_${OPEND_VERSION}_Ubuntu18.04.tar.gz"
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl tar telnet gettext-base \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/opend
+
+# Download official Moomoo/Futu OpenD CLI release (or copy local archive if placed in deploy/opend/)
+RUN curl -fsSL "${OPEND_URL}" -o /tmp/opend.tar.gz \
+    && tar -xzf /tmp/opend.tar.gz --strip-components=1 -C /opt/opend \
+    && rm -f /tmp/opend.tar.gz \
+    && chmod +x /opt/opend/OpenD || true
+
+COPY deploy/opend-entrypoint.sh /usr/local/bin/opend-entrypoint.sh
+RUN sed -i 's/\r$//' /usr/local/bin/opend-entrypoint.sh && chmod +x /usr/local/bin/opend-entrypoint.sh \
+    && useradd --system --create-home --home-dir /home/opend opend \
+    && chown -R opend:opend /opt/opend /home/opend
+
+USER opend
+EXPOSE 11111
+
+ENTRYPOINT ["/usr/local/bin/opend-entrypoint.sh"]

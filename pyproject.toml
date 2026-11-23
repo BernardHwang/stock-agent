@@ -9,6 +9,7 @@ dependencies = [
     "tradingagents @ git+https://github.com/TauricResearch/TradingAgents@v0.7.1",
     "langchain",
     "langchain-google-genai",
+    "langchain-openai",
     "yfinance",
     "python-telegram-bot>=21,<23",
     "apscheduler>=3.10,<4",

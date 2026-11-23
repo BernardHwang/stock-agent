@@ -11,7 +11,7 @@ from typing import Any
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool, StructuredTool
 
-from .analysis import is_rate_limit, langchain_provider
+from .analysis import is_rate_limit, langchain_provider, llm_client_kwargs
 from .chat_tools import TOOL_NAMES, ChatToolbox
 from .config import Settings
 from .models import ChatMessage
@@ -35,50 +35,87 @@ TOOL_DESCRIPTIONS = {
                      "weight as a % of stock holdings (cash excluded).",
     "refresh_positions": "Re-read moomoo positions now (use when the owner says they bought or sold), then "
                          "return the portfolio.",
-    "get_stock_context": "Everything known about one stock: position, active plan and levels, latest deep "
-                         "analysis summary and its age, live price, whether a fresh deep analysis is "
-                         "recommended and why, saved notes, and look-alike tickers the owner may have meant.",
+    "get_stock_context": "Everything known about one stock: position (with P/L and portfolio weight), active plan "
+                         "and levels, latest deep analysis summary and its age, live price, whether a fresh deep "
+                         "analysis is recommended and why, saved notes, and look-alike tickers.",
+    "get_full_report": "Full saved deep analysis report (Final decision, Trader plan, Technicals, Fundamentals) "
+                       "for a stock when the owner asks why an analysis recommended something.",
     "get_news": "Latest news headlines for a stock, with publish time and whether each looks major.",
     "get_market_overview": "Today's move of the major US indices (SPY, QQQ, DIA) as fractions.",
     "list_notes": "Saved memory notes for a ticker, or the owner's own notes when ticker is omitted.",
     "add_note": "Save a short dated memory note: about a ticker, or about the owner when ticker is omitted.",
     "forget_note": "Deactivate a memory note by id (it can be restored).",
     "restore_note": "Re-activate a previously forgotten note by id.",
-    "queue_deep_analysis": "Queue a full multi-agent analysis (~5 min). Only when the owner explicitly asks.",
+    "get_watchlist": "List the tickers on the owner's weekly analysis watchlist.",
+    "add_to_watchlist": "Add a ticker to the weekly analysis watchlist.",
+    "remove_from_watchlist": "Remove a ticker from the weekly analysis watchlist.",
+    "list_active_plans": "List all active trade plans across the portfolio with their entry, TP, SL, and thesis.",
+    "queue_deep_analysis": "Queue a full multi-agent analysis (~5 min) when the owner asks to analyse or plan a stock.",
     "offer_deep_analysis": "Show the owner a 'Run full analysis' button for a ticker.",
 }
 
-SYSTEM_PROMPT = """You are the owner's personal stock market assistant in Telegram. Today is {today} (UTC).
-You only inform and suggest; the owner places every order themselves. You cannot trade.
+SYSTEM_PROMPT = """You are the owner's personal financial advisor and investment partner in Telegram.
+Today is {today} (UTC). You advise and discuss strategy; the owner places every order themselves in moomoo.
+You cannot execute trades.
 
-How to answer:
-- For decisions ("good time to enter X?", "buy more X?", "sell?") start with a verdict: Yes, Wait or No,
-  then the reason in one or two lines, then the numbers: entry/add range, take-profit and stop loss. For
-  "Wait", say what price or event would change your mind. When the owner holds the stock, use their average
-  cost, P/L and portfolio weight, suggest roughly how much to add, and how the stop changes after adding.
-- Use only numbers from tool results. Never invent prices, positions or levels; if data is missing, say so.
-- Call get_stock_context before giving a view on a stock. If deep_recommended is true, say so up front
-  (with deep_reason) and call offer_deep_analysis. Call queue_deep_analysis only when the owner explicitly
-  asks for a full or deep analysis.
+Your persona and advisory style:
+- Pragmatic, warm, candid, and direct. Speak like a sharp human financial advisor who knows the owner's
+  portfolio inside out—never like a robotic template or a rigid report generator.
+- Do not start every answer with a mechanical "Yes / Wait / No" header unless a quick one-word verdict
+  genuinely fits. Instead, talk through the setup, the thesis, and how it fits their portfolio naturally.
+- Weave key numbers (buy zone, take-profit, stop loss, average cost, P/L, portfolio weight) smoothly into
+  your advice when they are relevant, rather than dumping a rigid checklist every time.
+- Push back candidly when a trade looks impulsive, chases a stretched rally, catches a falling knife without
+  a catalyst, or makes a single position too concentrated in their portfolio. Ask clarifying questions when
+  their thesis, time horizon, or sizing intent is unclear.
+- Factor in portfolio balance and risk: when they ask about buying or adding to a stock, check how much they
+  already hold, their average cost, and how adding affects their concentration and downside risk.
+
+Tool and memory rules:
+- Use only numbers from tool results. Never invent prices, positions, or levels; if data is missing, say so.
+- Call get_stock_context (and get_portfolio when portfolio balance or sizing matters) before giving a view on
+  a stock. If deep_recommended is true, mention naturally why a fresh deep dive could help (using deep_reason)
+  and call offer_deep_analysis. Call queue_deep_analysis when the owner asks for a full/deep analysis or plan.
+- Manage the owner's watchlist (get_watchlist, add_to_watchlist, remove_from_watchlist) and review active
+  plans (list_active_plans) directly when asked in conversation—don't tell them to run slash commands.
 - If get_stock_context returns lookalike tickers and the owner may have mistyped, ask which one they meant.
-- Saved plans are long-only. You may discuss shorting if asked, but never present it as a saved plan.
-- When the owner says they bought or sold something, call refresh_positions; if moomoo doesn't show it, say
-  so and don't record it as done.
-- After a substantive suggestion or a decision by the owner, save a short dated stock note with add_note.
-  Save lasting preferences the owner states ("I don't short", "max 20% per stock") as owner notes. When asked
-  what you remember, use list_notes; when told to forget something, use forget_note.
+- Saved plans are long-only. You may discuss shorting or hedging if asked, but never present a short as a
+  saved plan.
+- When the owner says they bought or sold something, call refresh_positions; if moomoo doesn't show it yet,
+  let them know and don't record it as done.
+- After a substantive discussion, recommendation, or decision by the owner, save a short dated note with
+  add_note. Save lasting personal preferences, goals, or risk rules ("I don't short", "max 20% per stock") as
+  owner notes. When asked what you remember, use list_notes; when told to forget something, use forget_note.
 - Messages starting with [Bot alert] are alerts you sent earlier; replies may refer to them.
-- Plain text, no markdown headings, at most 1200 characters.
+- Structure your replies so they are clean, scannable, and easy to read in Telegram:
+  • Use short paragraphs, bullet points (•), and Telegram HTML tags: <b>bold</b> for section headers or key
+    takeaways, <code>tickers / price levels</code> for numbers, and <i>italics</i> for nuance.
+  • Never use markdown # headings or raw markdown tables; keep replies under 1500 characters.
 
-Owner notes (standing preferences):
+Current portfolio snapshot (last sync):
+{portfolio_snapshot}
+
+Owner notes (standing preferences, goals & risk rules):
 {owner_notes}
 """
 
-FOLLOW_UP_PROMPT = """[A full analysis of {code} you ran for the owner just finished.]
+FOLLOW_UP_PROMPT = """[The deep analysis of {code} you queued for the owner just finished.]
 {result}
 
-In two or three sentences, tell the owner whether your view changed compared with what you said about {code}
-earlier in this chat, and what that means for them now. Plain text."""
+In two or three natural sentences, follow up with the owner as their advisor: let them know whether this deep
+dive changed your view compared with your earlier conversation about {code}, and what the practical takeaway
+is for their position or entry plan. Use Telegram HTML (<b>bold</b>, <code>prices/tickers</code>) for readability."""
+
+DAILY_BRIEF_PROMPT = """[Morning Daily Briefing Data for the owner]
+{snapshot}
+
+Write a concise, well-structured morning check-in as the owner's personal financial advisor (use Telegram HTML
+like <b>bold</b>, <code>tickers/prices</code>, and • bullet points; no markdown # headings, under 1200 characters):
+1. Briefly summarize how the broader market (SPY/QQQ/DIA) closed and what drove the session.
+2. Give a quick advisor take on how their held positions or open plans look (especially any stock close to its
+   take-profit/stop-loss or with notable news/moves), and whether any plan needs adjusting.
+3. If any stock is listed in `auto_queued_reviews`, mention that you've already queued a fresh deep analysis
+   to re-check its plan."""
 
 LlmFactory = Callable[[list[BaseTool]], Any]
 
@@ -115,7 +152,11 @@ class ChatEngine:
     def _default_factory(self, tools: list[BaseTool]) -> Any:
         from langchain.chat_models import init_chat_model
 
-        llm = init_chat_model(self.settings.quick_model, model_provider=langchain_provider(self.settings.llm_provider))
+        llm = init_chat_model(
+            self.settings.effective_chat_model,
+            model_provider=langchain_provider(self.settings.llm_provider),
+            **llm_client_kwargs(self.settings),
+        )
         return llm.bind_tools(tools)
 
     def _model(self) -> Any:
@@ -142,7 +183,27 @@ class ChatEngine:
     def _system(self) -> SystemMessage:
         notes = self.store.notes(None)
         owner_notes = "\n".join(f"- ({n.at:%Y-%m-%d}) {n.text}" for n in notes) or "- none yet"
-        return SystemMessage(SYSTEM_PROMPT.format(today=f"{self.now():%Y-%m-%d %a}", owner_notes=owner_notes))
+        positions = self.store.last_positions()
+        total_cost = sum(p.qty * p.avg_cost for p in positions)
+        if positions:
+            pos_lines = []
+            for p in positions:
+                w = f" (~{p.qty * p.avg_cost / total_cost * 100:.0f}% by cost)" if total_cost else ""
+                plan = self.store.active_plan(p.code)
+                lv = ""
+                if plan and (plan.fields.tp or plan.fields.sl):
+                    bits = [f"TP {plan.fields.tp:.2f}" if plan.fields.tp else "",
+                            f"SL {plan.fields.sl:.2f}" if plan.fields.sl else ""]
+                    lv = f" [{', '.join(b for b in bits if b)}]"
+                pos_lines.append(f"- {p.code}: {p.qty:g} shares @ {p.avg_cost:.2f}{w}{lv}")
+            portfolio_snapshot = "\n".join(pos_lines)
+        else:
+            portfolio_snapshot = "- no positions synced yet"
+        return SystemMessage(SYSTEM_PROMPT.format(
+            today=f"{self.now():%Y-%m-%d %a}",
+            portfolio_snapshot=portfolio_snapshot,
+            owner_notes=owner_notes,
+        ))
 
     @staticmethod
     def _history(messages: list[ChatMessage]) -> list[BaseMessage]:
@@ -218,5 +279,22 @@ class ChatEngine:
                 return None
             except Exception:
                 log.exception("chat follow-up failed for %s", code)
+                return None
+            return _text(ai.content) or None
+
+    async def daily_briefing(self, snapshot: dict[str, Any]) -> str | None:
+        """Generate a concise advisor morning briefing from the daily market & portfolio snapshot."""
+        async with self._lock:
+            messages = [
+                self._system(),
+                HumanMessage(DAILY_BRIEF_PROMPT.format(snapshot=json.dumps(snapshot, default=str))),
+            ]
+            try:
+                self._spend()
+                ai = await asyncio.wait_for(self._model().ainvoke(messages), TURN_TIMEOUT_S)
+            except _CapReached:
+                return None
+            except Exception:
+                log.exception("daily briefing generation failed")
                 return None
             return _text(ai.content) or None

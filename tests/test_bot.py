@@ -72,37 +72,8 @@ def test_normalize_ticker(arg, code):
 
 async def test_non_owner_ignored(store):
     u = upd(chat=999)
-    await cmds(store).plan(u, ctx("NVDA"))
-    assert u.message.replies == [] and store.pending_count() == 0
-
-
-async def test_plan_command_enqueues_priority_1_and_kicks_queue(store):
-    kicked = []
-    u = upd()
-    await cmds(store, kicked).plan(u, ctx("NVDA"))
-    item = store.next_queue_item()
-    assert item.code == "US.NVDA" and item.priority == 1 and kicked == [True]
-    assert "Queued" in u.message.replies[0]
-
-
-async def test_plan_without_arg_shows_usage(store):
-    u = upd()
-    await cmds(store).plan(u, ctx())
-    assert "Usage" in u.message.replies[0]
-
-
-async def test_bad_ticker_friendly_error(store):
-    u = upd()
-    await cmds(store).plan(u, ctx("$$$"))
-    assert "ticker" in u.message.replies[0].lower() and store.pending_count() == 0
-
-
-async def test_watch_unwatch_roundtrip(store):
-    c = cmds(store)
-    await c.watch(upd(), ctx("NVDA"))
-    assert c.watchlist() == ["US.NVDA"]
-    await c.unwatch(upd(), ctx("NVDA"))
-    assert c.watchlist() == []
+    await cmds(store).holdings(u, ctx())
+    assert u.message.replies == []
 
 
 async def test_status_includes_opend_ai_quota_queue(store):
@@ -146,25 +117,6 @@ async def _kick():
     return None
 
 
-def _save(store, code="US.MDB", text="## Final decision\nUnderweight: trim in stages.\n\n## Trader plan\nSell"):
-    from stockagent.analysis import save_report
-    save_report(store, code, text, NOW)
-
-
-async def test_why_shows_saved_analysis(store):
-    _save(store)
-    u = upd()
-    await cmds(store).why(u, ctx("MDB"))
-    text = u.message.replies[0]
-    assert "US.MDB" in text and "Underweight: trim in stages." in text and "2026-11-06" in text
-
-
-async def test_why_without_analysis_suggests_plan(store):
-    u = upd()
-    await cmds(store).why(u, ctx("MDB"))
-    assert "/plan MDB" in u.message.replies[0]
-
-
 async def test_text_routes_to_chat_with_quote(store):
     c, chat, _ = cmds_with_chat(store)
     u = upd(text="why?", quoted="SL hit")
@@ -181,11 +133,11 @@ async def test_text_from_other_user_in_owner_chat_ignored(store):
 
 
 async def test_reply_escaped_and_chunked(store):
-    c, _, _ = cmds_with_chat(store, ChatReply("<b>" + "x" * 5000))
+    c, _, _ = cmds_with_chat(store, ChatReply("<script>" + "x" * 5000))
     u = upd(text="hi")
     await c.text(u, ctx())
     assert all(len(r) <= 4096 for r in u.message.replies)
-    assert u.message.replies[0].startswith("&lt;b&gt;")
+    assert u.message.replies[0].startswith("&lt;script&gt;")
 
 
 async def test_offer_adds_button(store):
@@ -207,31 +159,11 @@ async def test_button_queues_deep(store):
     assert queued == ["US.MDB"]
 
 
-async def test_ask_uses_chat(store):
-    c, chat, _ = cmds_with_chat(store)
-    u = upd()
-    await c.ask(u, ctx("MDB", "why", "not", "sell?"))
-    assert chat.calls[0][0] == "About US.MDB: why not sell?"
-
-
-async def test_ask_usage(store):
-    c, chat, _ = cmds_with_chat(store)
-    u = upd()
-    await c.ask(u, ctx("MDB"))
-    assert "Usage" in u.message.replies[0] and chat.calls == []
-
-
-async def test_ask_ignored_for_non_owner(store):
-    c, chat, _ = cmds_with_chat(store)
-    await c.ask(upd(chat=999), ctx("MDB", "why?"))
-    assert chat.calls == []
-
-
 async def test_commands_registered_in_telegram_menu():
     from stockagent.bot import BOT_COMMANDS, register_commands
 
     names = [n for n, _ in BOT_COMMANDS]
-    assert {"plan", "why", "ask", "plans", "holdings", "watch", "unwatch", "status", "help"} <= set(names)
+    assert names == ["holdings", "plans", "status", "help"]
     sent = {}
 
     class FakeBot:
