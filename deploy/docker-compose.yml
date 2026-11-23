@@ -39,6 +39,9 @@ services:
       MOOMOO_PORT: "11111"
     volumes:
       - ../data:/app/data
+      # Hide OpenD's saved login (data/opend) from this container; it only needs the API on opend:11111.
+      - type: tmpfs
+        target: /app/data/opend
       - ../data/tradingagents:/home/app/.tradingagents
       - ../config:/app/config:ro
     networks:
