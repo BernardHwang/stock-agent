@@ -1,4 +1,4 @@
-# Run from the repo root:  docker compose -f deploy/docker-compose.yml up -d --build
+# Run from the repo root:  docker compose --env-file .env -f deploy/docker-compose.yml up -d --build
 # Both opend and stockagent share an internal-only Docker network (stocknet).
 # OpenD has NO ports published to the host or internet; only stockagent can reach opend:11111.
 services:
@@ -6,6 +6,8 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.opend
+      args:
+        OPEND_VERSION: ${OPEND_VERSION:-9.6.5608}
     platform: linux/amd64
     restart: unless-stopped
     init: true
