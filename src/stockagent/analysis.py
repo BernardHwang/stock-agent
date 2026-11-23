@@ -32,6 +32,32 @@ ExtractFn = Callable[[str, str, Position | None, Settings], PlanFields]
 _LC_PROVIDER = {"google": "google_genai", "cloudflare": "openai"}
 
 
+TOOL_CALL_FILLER = "Looking that up."
+
+
+def patch_openai_tool_call_content() -> None:
+    """Give assistant tool-call messages text in every ChatOpenAI request, TradingAgents' subclasses included.
+
+    langchain sends them with ``content: null``; Cloudflare Workers AI rejects that with HTTP 400, which made deep
+    analyses fail on the analysts' second round after the first calls had already spent quota.
+    """
+    from langchain_openai import ChatOpenAI
+
+    original = ChatOpenAI._get_request_payload
+    if getattr(original, "_fills_tool_call_content", False):
+        return
+
+    def _get_request_payload(self, input_, *, stop=None, **kwargs):
+        payload = original(self, input_, stop=stop, **kwargs)
+        for m in payload.get("messages", []):
+            if m.get("role") == "assistant" and m.get("tool_calls") and not m.get("content"):
+                m["content"] = TOOL_CALL_FILLER
+        return payload
+
+    _get_request_payload._fills_tool_call_content = True  # type: ignore[attr-defined]
+    ChatOpenAI._get_request_payload = _get_request_payload  # type: ignore[method-assign]
+
+
 def llm_client_kwargs(settings: Settings) -> dict[str, Any]:
     """Extra kwargs for init_chat_model when using OpenAI-compatible endpoints like Cloudflare Workers AI."""
     kw: dict[str, Any] = {}
@@ -223,24 +249,18 @@ class AnalysisWorker:
         try:
             self.store.record_run(code, now)
             report = await asyncio.to_thread(self.run, to_yf(code), now.date().isoformat(), self.settings)
+        except Exception as exc:
+            return await self._failed(item_id, code, exc)
+        # Save before extracting: the report is the expensive part and chat can still use it if extraction fails.
+        price = await self._price(code)
+        save_report(self.store, code, report, now, price)
+        try:
             fields = await asyncio.to_thread(self.extract, report, code, held, self.settings)
         except Exception as exc:
-            if is_rate_limit(exc):
-                self.store.requeue(item_id)
-                alert = self.health.problem("ai_quota", "AI quota reached. Remaining analyses will retry later.")
-                if alert:
-                    await self.notify(format_health(alert.text))
-                return False
-            log.exception("analysis failed for %s", code)
-            self.store.finish_queue_item(item_id, "failed")
-            await self.notify(format_info(f"Analysis for {code} failed ({type(exc).__name__}). It will not retry "
-                                          "automatically; use /plan to try again."))
-            return True
+            return await self._failed(item_id, code, exc)
 
         if self.health.resolved("ai_quota"):
             await self.notify(format_info("AI quota available again."))
-        price = await self._price(code)
-        save_report(self.store, code, report, now, price)
         try:
             errors = validate_fields(fields) or validate_against_price(fields, price)
             if errors:
@@ -264,6 +284,20 @@ class AnalysisWorker:
                 log.exception("on_result failed for %s", code)
         return True
 
+    async def _failed(self, item_id: int, code: str, exc: Exception) -> bool:
+        """Returns False when draining should stop (AI quota exhausted)."""
+        if is_rate_limit(exc):
+            self.store.requeue(item_id)
+            alert = self.health.problem("ai_quota", "AI quota reached. Remaining analyses will retry later.")
+            if alert:
+                await self.notify(format_health(alert.text))
+            return False
+        log.exception("analysis failed for %s", code)
+        self.store.finish_queue_item(item_id, "failed")
+        await self.notify(format_info(f"Analysis for {code} failed ({type(exc).__name__}). It will not retry "
+                                      "automatically; ask me to run a full analysis to try again."))
+        return True
+
     async def _price(self, code: str) -> float | None:
         if self.price_fn is None:
             return None
@@ -280,6 +314,7 @@ def _cli() -> None:
 
     load_dotenv()
     logging.basicConfig(level=logging.INFO)
+    patch_openai_tool_call_content()
     s = Settings()
     code = sys.argv[1] if "." in sys.argv[1] else f"US.{sys.argv[1]}"
     held = read_held_position(code, s)

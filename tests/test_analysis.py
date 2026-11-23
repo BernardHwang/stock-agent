@@ -301,3 +301,31 @@ async def test_worker_calls_on_result(store):
     w.on_result = on_result
     await w.drain()
     assert calls == [("US.NVDA", "chat", sent[-1])]
+
+
+def test_openai_payload_gives_tool_call_turns_content():
+    # Cloudflare Workers AI answers HTTP 400 when an assistant tool-call message has null content;
+    # TradingAgents' analysts send exactly that on their second round.
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+    from langchain_openai import ChatOpenAI
+
+    analysis.patch_openai_tool_call_content()
+    llm = ChatOpenAI(model="m", api_key="k", base_url="http://localhost:1")
+    msgs = [HumanMessage("q"), AIMessage("", tool_calls=[{"name": "t", "args": {}, "id": "c1"}]),
+            ToolMessage("r", tool_call_id="c1")]
+    assistant = llm._get_request_payload(msgs)["messages"][1]
+    assert assistant["role"] == "assistant" and assistant["content"] and assistant["tool_calls"]
+    analysis.patch_openai_tool_call_content()  # idempotent
+    assert llm._get_request_payload(msgs)["messages"][1]["content"] == assistant["content"]
+
+
+async def test_report_kept_when_plan_extraction_fails(store):
+    def bad_extract(report, code, held, s):
+        raise ValueError("model returned junk")
+
+    store.enqueue("US.NVDA", "weekly", 3, NOW)
+    w, sent = make(store, extract=bad_extract)
+    await w.drain()
+    saved = analysis.load_report(store, "US.NVDA")
+    assert saved is not None and saved.text == "report for NVDA"  # the expensive part is not thrown away
+    assert "failed" in sent[-1] and store.pending_count() == 0

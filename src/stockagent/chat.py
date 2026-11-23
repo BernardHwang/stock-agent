@@ -11,7 +11,7 @@ from typing import Any
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool, StructuredTool
 
-from .analysis import is_rate_limit, langchain_provider, llm_client_kwargs
+from .analysis import TOOL_CALL_FILLER, is_rate_limit, langchain_provider, llm_client_kwargs
 from .chat_tools import TOOL_NAMES, ChatToolbox
 from .config import Settings
 from .models import ChatMessage
@@ -28,7 +28,6 @@ WARN_TEXT = "(Heads-up: 90% of today's chat limit is used.)"
 TIMEOUT_TEXT = "That took too long, please try again."
 QUOTA_TEXT = "AI quota reached for now. Try again later."
 EMPTY_TEXT = "Sorry, I don't have an answer for that."
-TOOL_CALL_FILLER = "Looking that up."
 
 TOOL_DESCRIPTIONS = {
     "get_quotes": "Live prices for one or more tickers (e.g. ['NVDA', '0700.HK']).",
