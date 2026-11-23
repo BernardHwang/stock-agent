@@ -35,27 +35,57 @@ _LC_PROVIDER = {"google": "google_genai", "cloudflare": "openai"}
 TOOL_CALL_FILLER = "Looking that up."
 
 
-def patch_openai_tool_call_content() -> None:
-    """Give assistant tool-call messages text in every ChatOpenAI request, TradingAgents' subclasses included.
+def patch_openai_tool_messages() -> None:
+    """Make tool-call history acceptable to Cloudflare Workers AI in every ChatOpenAI request.
 
-    langchain sends them with ``content: null``; Cloudflare Workers AI rejects that with HTTP 400, which made deep
-    analyses fail on the analysts' second round after the first calls had already spent quota.
+    Applies to TradingAgents' ChatOpenAI subclasses too. Cloudflare answers HTTP 400 when an assistant tool-call
+    message has ``content: null`` (langchain's default) or holds more than one tool call (parallel calls, which it
+    also gives identical ids). Either made deep analyses fail mid-run after earlier calls had already spent quota.
     """
     from langchain_openai import ChatOpenAI
 
     original = ChatOpenAI._get_request_payload
-    if getattr(original, "_fills_tool_call_content", False):
+    if getattr(original, "_cloudflare_safe", False):
         return
 
     def _get_request_payload(self, input_, *, stop=None, **kwargs):
         payload = original(self, input_, stop=stop, **kwargs)
-        for m in payload.get("messages", []):
-            if m.get("role") == "assistant" and m.get("tool_calls") and not m.get("content"):
-                m["content"] = TOOL_CALL_FILLER
+        if "messages" in payload:
+            payload["messages"] = _cloudflare_safe_messages(payload["messages"])
         return payload
 
-    _get_request_payload._fills_tool_call_content = True  # type: ignore[attr-defined]
+    _get_request_payload._cloudflare_safe = True  # type: ignore[attr-defined]
     ChatOpenAI._get_request_payload = _get_request_payload  # type: ignore[method-assign]
+
+
+def _cloudflare_safe_messages(messages: list[dict]) -> list[dict]:
+    """One tool call per assistant message, each with text, a unique id, and its result right after it."""
+    out: list[dict] = []
+    i = 0
+    while i < len(messages):
+        m = messages[i]
+        calls = m.get("tool_calls") if m.get("role") == "assistant" else None
+        if not calls:
+            out.append(m)
+            i += 1
+            continue
+        results = []
+        j = i + 1
+        while j < len(messages) and messages[j].get("role") == "tool":
+            results.append(messages[j])
+            j += 1
+        if len(calls) == 1 or len(results) != len(calls):
+            out.append({**m, "content": m.get("content") or TOOL_CALL_FILLER})
+            i += 1
+            continue
+        # Results follow in call order (ids may be duplicated, so position is the only reliable link).
+        for k, (call, result) in enumerate(zip(calls, results, strict=True)):
+            call_id = f"{call.get('id') or 'call'}_{k}"
+            content = m.get("content") if k == 0 else None
+            out.append({**m, "content": content or TOOL_CALL_FILLER, "tool_calls": [{**call, "id": call_id}]})
+            out.append({**result, "tool_call_id": call_id})
+        i = j
+    return out
 
 
 def llm_client_kwargs(settings: Settings) -> dict[str, Any]:
@@ -314,7 +344,7 @@ def _cli() -> None:
 
     load_dotenv()
     logging.basicConfig(level=logging.INFO)
-    patch_openai_tool_call_content()
+    patch_openai_tool_messages()
     s = Settings()
     code = sys.argv[1] if "." in sys.argv[1] else f"US.{sys.argv[1]}"
     held = read_held_position(code, s)

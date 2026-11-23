@@ -309,13 +309,13 @@ def test_openai_payload_gives_tool_call_turns_content():
     from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
     from langchain_openai import ChatOpenAI
 
-    analysis.patch_openai_tool_call_content()
+    analysis.patch_openai_tool_messages()
     llm = ChatOpenAI(model="m", api_key="k", base_url="http://localhost:1")
     msgs = [HumanMessage("q"), AIMessage("", tool_calls=[{"name": "t", "args": {}, "id": "c1"}]),
             ToolMessage("r", tool_call_id="c1")]
     assistant = llm._get_request_payload(msgs)["messages"][1]
     assert assistant["role"] == "assistant" and assistant["content"] and assistant["tool_calls"]
-    analysis.patch_openai_tool_call_content()  # idempotent
+    analysis.patch_openai_tool_messages()  # idempotent
     assert llm._get_request_payload(msgs)["messages"][1]["content"] == assistant["content"]
 
 
@@ -329,3 +329,24 @@ async def test_report_kept_when_plan_extraction_fails(store):
     saved = analysis.load_report(store, "US.NVDA")
     assert saved is not None and saved.text == "report for NVDA"  # the expensive part is not thrown away
     assert "failed" in sent[-1] and store.pending_count() == 0
+
+
+def test_openai_payload_splits_parallel_tool_calls():
+    # Cloudflare Workers AI rejects (HTTP 400) an assistant message holding more than one tool call, and it
+    # gives parallel calls the same id. TradingAgents' news analyst often calls several tools at once.
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+    from langchain_openai import ChatOpenAI
+
+    analysis.patch_openai_tool_messages()
+    llm = ChatOpenAI(model="m", api_key="k", base_url="http://localhost:1")
+    calls = [{"name": "get_news", "args": {}, "id": "same"}, {"name": "get_global_news", "args": {}, "id": "same"}]
+    msgs = [HumanMessage("q"), AIMessage("", tool_calls=calls),
+            ToolMessage("news", tool_call_id="same"), ToolMessage("global", tool_call_id="same")]
+    out = llm._get_request_payload(msgs)["messages"]
+    assert [m["role"] for m in out] == ["user", "assistant", "tool", "assistant", "tool"]
+    assert [m["tool_calls"][0]["function"]["name"] for m in out if m["role"] == "assistant"] == \
+        ["get_news", "get_global_news"]
+    ids = [m["tool_calls"][0]["id"] for m in out if m["role"] == "assistant"]
+    assert len(set(ids)) == 2 and [m["tool_call_id"] for m in out if m["role"] == "tool"] == ids
+    assert [m["content"] for m in out if m["role"] == "tool"] == ["news", "global"]
+    assert all(m["content"] for m in out if m["role"] == "assistant")
