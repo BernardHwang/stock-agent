@@ -77,7 +77,7 @@ Example for **Cloudflare Workers AI (Free 10,000 Neurons/day)**:
 ```
 LLM_PROVIDER=cloudflare
 DEEP_MODEL=@cf/meta/llama-3.3-70b-instruct-fp8-fast
-QUICK_MODEL=@cf/meta/llama-3.1-8b-instruct-fast
+QUICK_MODEL=@cf/meta/llama-3.3-70b-instruct-fp8-fast
 CLOUDFLARE_ACCOUNT_ID=your-cloudflare-account-id
 CLOUDFLARE_API_TOKEN=your-cloudflare-workers-ai-token
 MAX_DEBATE_ROUNDS=1
