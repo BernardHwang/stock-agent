@@ -96,7 +96,8 @@ def validate_against_price(f: PlanFields, price: float | None) -> list[str]:
     errors: list[str] = []
     if f.sl is not None and f.sl >= price:
         errors.append(f"stop loss {f.sl:.2f} is at or above the current price {price:.2f}")
-    if f.tp is not None and f.action != Action.EXIT and f.tp <= price:
+    # BUY only: for a HOLD/TRIM on a winner, a target already reached is valid advice and its alert fires next tick.
+    if f.action == Action.BUY and f.tp is not None and f.tp <= price:
         errors.append(f"take-profit {f.tp:.2f} is at or below the current price {price:.2f}")
     if f.action == Action.BUY and f.entry_low is not None and f.entry_high is not None:
         if f.entry_low > price * (1 + BUY_ZONE_MAX_ABOVE):

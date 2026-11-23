@@ -83,9 +83,15 @@ def test_buy_zone_near_live_price_accepted():
     assert validate_against_price(_buy(entry_low=295, entry_high=320, sl=270, tp=400), 316.0) == []
 
 
-def test_take_profit_at_or_below_live_price_rejected():
-    hold = PlanFields(action="HOLD", tp=300, sl=250, confidence="medium", holding_months=6, reasoning="r")
-    assert any("take-profit" in e for e in validate_against_price(hold, 316.0))
+def test_buy_take_profit_at_or_below_live_price_rejected():
+    errors = validate_against_price(_buy(entry_low=290, entry_high=300, sl=270, tp=310), 316.0)
+    assert any("take-profit" in e for e in errors)
+
+
+def test_trim_with_target_already_reached_accepted():
+    # A held winner at 316 with target 300 reached: "TRIM now" is valid advice; the TP alert fires on the next tick.
+    trim = PlanFields(action="TRIM", tp=300, sl=250, confidence="medium", holding_months=6, reasoning="r")
+    assert validate_against_price(trim, 316.0) == []
 
 
 def test_no_live_price_skips_checks():
