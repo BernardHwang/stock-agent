@@ -85,13 +85,27 @@ def validate_fields(f: PlanFields) -> list[str]:
     return errors
 
 
+BUY_ZONE_MAX_ABOVE = 0.10  # a buy zone starting further above the live price is a stale or invented level
+BUY_ZONE_MAX_BELOW = 0.25  # one ending further below would likely never fill before the plan expires
+
+
 def validate_against_price(f: PlanFields, price: float | None) -> list[str]:
-    """The report is based on the last close; reject levels the live price has already crossed."""
-    if price is None or f.sl is None:
+    """Reject levels that don't fit the live price: already crossed, or far from where the stock trades."""
+    if price is None:
         return []
-    if f.sl >= price:
-        return [f"stop loss {f.sl:.2f} is at or above the current price {price:.2f}"]
-    return []
+    errors: list[str] = []
+    if f.sl is not None and f.sl >= price:
+        errors.append(f"stop loss {f.sl:.2f} is at or above the current price {price:.2f}")
+    if f.tp is not None and f.action != Action.EXIT and f.tp <= price:
+        errors.append(f"take-profit {f.tp:.2f} is at or below the current price {price:.2f}")
+    if f.action == Action.BUY and f.entry_low is not None and f.entry_high is not None:
+        if f.entry_low > price * (1 + BUY_ZONE_MAX_ABOVE):
+            errors.append(f"buy zone {f.entry_low:.2f}-{f.entry_high:.2f} starts more than "
+                          f"{BUY_ZONE_MAX_ABOVE:.0%} above the current price {price:.2f}")
+        elif f.entry_high < price * (1 - BUY_ZONE_MAX_BELOW):
+            errors.append(f"buy zone {f.entry_low:.2f}-{f.entry_high:.2f} ends more than "
+                          f"{BUY_ZONE_MAX_BELOW:.0%} below the current price {price:.2f}")
+    return errors
 
 
 def risk_reward(f: PlanFields) -> float | None:

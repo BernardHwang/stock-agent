@@ -1,6 +1,6 @@
 import pytest
 
-from stockagent.models import PlanFields, risk_reward, validate_fields
+from stockagent.models import PlanFields, risk_reward, validate_against_price, validate_fields
 
 
 def buy(**kw):
@@ -60,3 +60,33 @@ def test_risk_reward_none_for_exit():
 
 def test_reasoning_truncated():
     assert len(buy(reasoning="x" * 2000).reasoning) <= 600
+
+
+def _buy(**kw):
+    base = {"action": "BUY", "entry_low": 420, "entry_high": 450, "tp": 580, "sl": 380,
+            "confidence": "high", "holding_months": 6, "reasoning": "r"}
+    return PlanFields(**(base | kw))
+
+
+def test_buy_zone_far_above_live_price_rejected():
+    # Real case: MDB at ~316, model proposed buying 420-450 from stale memory.
+    errors = validate_against_price(_buy(sl=300), 316.0)
+    assert any("buy zone" in e for e in errors)
+
+
+def test_buy_zone_far_below_live_price_rejected():
+    errors = validate_against_price(_buy(entry_low=200, entry_high=220, sl=180, tp=380), 316.0)
+    assert any("buy zone" in e for e in errors)
+
+
+def test_buy_zone_near_live_price_accepted():
+    assert validate_against_price(_buy(entry_low=295, entry_high=320, sl=270, tp=400), 316.0) == []
+
+
+def test_take_profit_at_or_below_live_price_rejected():
+    hold = PlanFields(action="HOLD", tp=300, sl=250, confidence="medium", holding_months=6, reasoning="r")
+    assert any("take-profit" in e for e in validate_against_price(hold, 316.0))
+
+
+def test_no_live_price_skips_checks():
+    assert validate_against_price(_buy(), None) == []
