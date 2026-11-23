@@ -3,7 +3,6 @@
 import asyncio
 import html
 import logging
-import re
 from collections.abc import Awaitable, Callable, Coroutine
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -14,7 +13,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from .analysis import AnalysisWorker
-from .bot import PRIORITY_CANDIDATE, PRIORITY_PLAN_CMD, BotCommands, build_bot, send
+from .bot import PRIORITY_CANDIDATE, PRIORITY_PLAN_CMD, BotCommands, build_bot, send, start_bot
 from .chat import ChatEngine
 from .chat_tools import ChatDeps, ChatToolbox
 from .config import Settings, load_screener_rules, load_universe
@@ -28,6 +27,7 @@ from .messages import (
     format_level_alert,
     format_news_alert,
     format_weekly_summary,
+    to_plain,
 )
 from .models import Alert, PlanState
 from .moomoo_gw import MoomooGateway
@@ -43,7 +43,6 @@ log = logging.getLogger(__name__)
 PRIORITY_URGENT = 0
 PRIORITY_REVIEW = 2
 LEVEL_KINDS = {"entry", "partial_tp", "tp", "sl", "expired"}
-_TAG_RE = re.compile(r"<[^>]+>")
 
 
 def _utcnow() -> datetime:
@@ -83,7 +82,7 @@ class App:
             log.exception("failed to send Telegram message")
             return
         # Alerts join the chat history so the owner can reply "why?" to them.
-        self.store.log_message("alert", html.unescape(_TAG_RE.sub("", text)), self.now())
+        self.store.log_message("alert", to_plain(text), self.now())
 
     # chat
     def prices(self, codes: list[str]) -> dict[str, float]:
@@ -406,9 +405,7 @@ class App:
                               max_instances=1, coalesce=True, misfire_grace_time=3600)
 
         async with tg:
-            await tg.start()
-            assert tg.updater is not None
-            await tg.updater.start_polling(drop_pending_updates=True)
+            await start_bot(tg)
             await self.feed.start()
             scheduler.start()
             await self.notify(format_info("Stock agent started. Send /help for commands."))

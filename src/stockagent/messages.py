@@ -2,7 +2,7 @@
 
 import re
 from datetime import UTC, datetime
-from html import escape
+from html import escape, unescape
 from zoneinfo import ZoneInfo
 
 from .models import Action, Alert, Plan, PlanFields, risk_reward
@@ -40,6 +40,14 @@ TELEGRAM_CHUNK = 4000  # Telegram's hard limit is 4096 characters
 _SAFE_TAG_RE = re.compile(r"&lt;(/?(?:b|i|code|u|s|blockquote))&gt;", re.IGNORECASE)
 _MD_BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _MD_CODE_RE = re.compile(r"`([^`\n]+)`")
+
+
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def to_plain(html_text: str) -> str:
+    """Telegram HTML -> plain text (tags dropped, entities decoded)."""
+    return unescape(_TAG_RE.sub("", html_text))
 
 
 def render_telegram_html(text: str) -> str:

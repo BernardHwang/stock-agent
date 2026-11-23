@@ -183,3 +183,89 @@ async def test_button_when_already_running(store):
     u = cb_upd("deep:US.MDB")
     await c.button(u, ctx())
     assert "Already analysing US.MDB" in u.callback_query.message.replies[-1]
+
+
+class BadHtmlMsg(Msg):
+    async def reply_text(self, text, reply_markup=None, parse_mode=None, **kw):
+        if parse_mode == "HTML":
+            from telegram.error import BadRequest
+            raise BadRequest("Can't parse entities: unclosed start tag at byte offset 3")
+        await super().reply_text(text, reply_markup=reply_markup, **kw)
+
+
+async def test_reply_falls_back_to_plain_text_on_bad_html(store):
+    c, _, _ = cmds_with_chat(store, reply=ChatReply("<b>NVDA & AMD", offer_deep=["US.NVDA"]))
+    u = upd(text="hi")
+    u.message = BadHtmlMsg(text="hi")
+    await c.text(u, ctx())
+    assert u.message.replies[-1].startswith("NVDA & AMD") and u.message.markups[-1] is not None
+
+
+async def test_send_falls_back_to_plain_text_on_bad_html():
+    from telegram.error import BadRequest
+
+    from stockagent.bot import send
+
+    sent = []
+
+    class FakeBot:
+        async def send_message(self, chat_id, text, parse_mode=None, **kw):
+            if parse_mode == "HTML":
+                raise BadRequest("Can't parse entities: unexpected end tag")
+            sent.append(text)
+
+    await send(SimpleNamespace(bot=FakeBot()), OWNER, "<i>briefing</b> &lt;ok&gt;")
+    assert sent == ["briefing <ok>"]
+
+
+async def test_send_reraises_other_bad_requests():
+    from telegram.error import BadRequest
+
+    from stockagent.bot import send
+
+    class FakeBot:
+        async def send_message(self, **kw):
+            raise BadRequest("Chat not found")
+
+    with pytest.raises(BadRequest):
+        await send(SimpleNamespace(bot=FakeBot()), OWNER, "x")
+
+
+async def test_start_bot_registers_menu_commands():
+    from stockagent.bot import BOT_COMMANDS, start_bot
+
+    calls = []
+
+    async def start():
+        calls.append("start")
+
+    async def start_polling(**kw):
+        calls.append("poll")
+
+    async def set_my_commands(commands):
+        calls.append([c.command for c in commands])
+
+    tg = SimpleNamespace(start=start, updater=SimpleNamespace(start_polling=start_polling),
+                         bot=SimpleNamespace(set_my_commands=set_my_commands))
+    await start_bot(tg)
+    assert calls == ["start", "poll", [n for n, _ in BOT_COMMANDS]]
+
+
+async def test_start_bot_survives_menu_registration_failure():
+    from stockagent.bot import start_bot
+
+    async def ok(**kw):
+        pass
+
+    async def fail(commands):
+        raise RuntimeError("network")
+
+    tg = SimpleNamespace(start=ok, updater=SimpleNamespace(start_polling=ok), bot=SimpleNamespace(set_my_commands=fail))
+    await start_bot(tg)
+
+
+async def test_unknown_command_points_to_plain_chat(store):
+    c = cmds(store)
+    u = upd(text="/plan NVDA")
+    await c.unknown(u, ctx())
+    assert "/plan" in u.message.replies[-1] and "/holdings" in u.message.replies[-1]
