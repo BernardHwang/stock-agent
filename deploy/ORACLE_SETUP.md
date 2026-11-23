@@ -2,7 +2,7 @@
 
 Both **moomoo OpenD** and **stockagent** run together in a single `docker-compose.yml` connected by a private Docker bridge network (`stocknet`).
 - **Zero exposed ports**: OpenD has **no ports published** to the host or internet (`11111` and `22222` are completely unreachable from outside Docker). Only `stockagent` can talk to `opend:11111` inside `stocknet`.
-- **No passwords in Git**: Your moomoo login lives only in `.env` on the server (`MOOMOO_LOGIN_ACCOUNT` and `MOOMOO_LOGIN_PWD_MD5`). The `opend` container generates `OpenD.xml` in memory at startup.
+- **No passwords in files**: moomoo OpenD 10.x does not read a login from config or `.env`. You log in once at the OpenD console and let it remember the login in `data/opend` (see below).
 
 ## 1. Create One Always Free VM
 
@@ -32,15 +32,7 @@ git clone https://github.com/BernardHwang/stock-agent.git && cd stock-agent
 cp .env.example .env
 ```
 
-Generate the MD5 hash of your moomoo password (so your plaintext password isn't stored):
-
-```bash
-echo -n 'YOUR_MOOMOO_PASSWORD' | md5sum
-```
-
 Edit `.env` (`nano .env`) and fill in:
-- `MOOMOO_LOGIN_ACCOUNT` = your moomoo phone / email / user ID
-- `MOOMOO_LOGIN_PWD_MD5` = the 32-character lowercase MD5 string from above
 - `TELEGRAM_BOT_TOKEN` & `TELEGRAM_CHAT_ID`
 - Your AI provider block (e.g. **Cloudflare Workers AI** or **Google Gemini** below)
 
@@ -52,17 +44,27 @@ docker compose -f deploy/docker-compose.yml up -d --build
 docker compose -f deploy/docker-compose.yml logs -f
 ```
 
+### First login (once per server)
+
+When the `opend` log ends with `Please enter account`, attach to its console and log in:
+
+```bash
+docker compose -f deploy/docker-compose.yml attach opend
+```
+
+Type your moomoo account, then your **plain** password (not an MD5), then `Y` to remember it. Detach with
+**Ctrl+P, Ctrl+Q**; Ctrl+C would stop OpenD. The remembered login lives in `data/opend`, so restarts and rebuilds
+log in by themselves.
+
 ### When Telegram says "OpenD not logged in. It may need SMS verification."
 
-On your first login from a new server (or occasionally when moomoo requests device verification), run `telnet` **inside** the isolated `opend` container:
+When moomoo asks to verify the device, use `telnet` **inside** the `opend` container:
 
 ```bash
 docker compose -f deploy/docker-compose.yml exec opend telnet 127.0.0.1 22222
 req_phone_verify_code          # moomoo sends an SMS to your phone
 input_phone_verify_code -code=123456
 ```
-
-Because `data/opend` is mounted as a persistent volume, OpenD remembers the verified device token across container restarts!
 
 ## 4. Using Cloudflare Workers AI (Free Tier) or Paid AI Models
 
