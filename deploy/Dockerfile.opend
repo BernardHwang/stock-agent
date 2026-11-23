@@ -3,7 +3,7 @@
 FROM --platform=linux/amd64 ubuntu:24.04
 
 ARG OPEND_VERSION=9.6.5608
-ARG OPEND_URL="https://softwaredownload.futunn.com/FTNN_OpenD_${OPEND_VERSION}_Ubuntu18.04.tar.gz"
+ARG OPEND_URL="https://softwaredownload.futunn.com/Futu_OpenD_${OPEND_VERSION}_Ubuntu18.04.tar.gz"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl tar telnet gettext-base \
@@ -11,11 +11,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /opt/opend
 
-# Download official Moomoo/Futu OpenD CLI release (or copy local archive if placed in deploy/opend/)
+# Download official Moomoo/Futu OpenD CLI release and flatten the OpenD binary into /opt/opend
 RUN curl -fsSL "${OPEND_URL}" -o /tmp/opend.tar.gz \
     && tar -xzf /tmp/opend.tar.gz --strip-components=1 -C /opt/opend \
     && rm -f /tmp/opend.tar.gz \
-    && chmod +x /opt/opend/OpenD || true
+    && OPEND_BIN="$(find /opt/opend -type f -name 'OpenD' | head -n 1)" \
+    && test -n "$OPEND_BIN" \
+    && chmod +x "$OPEND_BIN"
 
 COPY deploy/opend-entrypoint.sh /usr/local/bin/opend-entrypoint.sh
 RUN sed -i 's/\r$//' /usr/local/bin/opend-entrypoint.sh && chmod +x /usr/local/bin/opend-entrypoint.sh \
