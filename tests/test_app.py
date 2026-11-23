@@ -219,3 +219,12 @@ async def test_daily_summary_queues_big_mover_and_notifies(app, monkeypatch):
     assert any("NVDA dropped 6.2%" in m for m in app.sent)
     item = app.store.next_queue_item()
     assert item.code == "US.NVDA" and item.reason == "daily_move" and item.priority == 0
+
+
+async def test_holdings_sync_failure_shows_moomoo_reason(app):
+    def fail():
+        raise RuntimeError("position query failed for US: Unlock or verify the device first")
+
+    app.gateway.positions = fail
+    await app.holdings_sync()
+    assert "verify the device first" in app.sent[-1]

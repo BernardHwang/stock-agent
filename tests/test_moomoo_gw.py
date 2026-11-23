@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 from stockagent.models import Position
 from stockagent.moomoo_gw import MoomooGateway
@@ -109,3 +110,52 @@ def test_subscribe_returns_failed_codes():
     q.subscribe = lambda codes, subtypes, **kw: (-1, "quota exceeded")
     g, _ = gw(quote=q)
     assert g.subscribe({"US.A"}) == {"US.A"}
+
+
+def test_trade_contexts_reused_across_position_reads():
+    made, closed = [], []
+
+    class CountingTrade(FakeTrade):
+        def __init__(self, market):
+            super().__init__(market)
+            made.append(market)
+
+        def close(self):
+            closed.append(self.market)
+
+    g = MoomooGateway("h", 1, "FUTUMY", ["US", "HK"], on_tick=lambda c, p: None,
+                      quote_factory=FakeQuote, trade_factory=CountingTrade)
+    g.connect()
+    g.positions()
+    g.positions()
+    assert made == ["US", "HK"] and closed == []  # no connect/disconnect churn on every sync
+    g.close()
+    assert sorted(closed) == ["HK", "US"]
+
+
+def test_trade_context_replaced_after_failed_query():
+    made, closed = [], []
+
+    class FlakyTrade(FakeTrade):
+        fail = True
+
+        def __init__(self, market):
+            super().__init__(market)
+            made.append(market)
+
+        def position_list_query(self, **kw):
+            if FlakyTrade.fail:
+                return -1, "disconnected"
+            return super().position_list_query(**kw)
+
+        def close(self):
+            closed.append(self.market)
+
+    g = MoomooGateway("h", 1, "FUTUMY", ["US"], on_tick=lambda c, p: None,
+                      quote_factory=FakeQuote, trade_factory=FlakyTrade)
+    g.connect()
+    with pytest.raises(RuntimeError, match="disconnected"):
+        g.positions()
+    FlakyTrade.fail = False
+    assert g.positions() == [Position(code="US.NVDA", qty=10, avg_cost=120.5)]
+    assert made == ["US", "US"] and closed == ["US"]

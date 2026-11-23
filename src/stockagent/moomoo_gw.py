@@ -28,6 +28,8 @@ class MoomooGateway:
         self._quote_factory = quote_factory or self._default_quote
         self._trade_factory = trade_factory or self._default_trade
         self._quote: Any = None
+        self._trade: dict[str, Any] = {}  # one long-lived trade context per market (read-only queries)
+        self._trade_lock = threading.Lock()
         self._subscribed: set[str] = set()
         self._sub_lock = threading.RLock()
         self._healthy = True
@@ -56,6 +58,10 @@ class MoomooGateway:
     def close(self) -> None:
         if self._quote is not None:
             self._quote.close()
+        with self._trade_lock:
+            for ctx in self._trade.values():
+                ctx.close()
+            self._trade.clear()
 
     def _forward_quotes(self, df: pd.DataFrame) -> None:
         for code, price in zip(df["code"], df["last_price"], strict=True):
@@ -102,19 +108,29 @@ class MoomooGateway:
 
     def positions(self) -> list[Position]:
         out: list[Position] = []
-        for market in self.markets:
-            ctx = self._trade_factory(market)
-            try:
-                ret, df = ctx.position_list_query(trd_env=moomoo.TrdEnv.REAL, refresh_cache=True)
-            finally:
-                ctx.close()
+        with self._trade_lock:
+            for market in self.markets:
+                df = self._query_positions(market)
+                cost_col = "average_cost" if "average_cost" in df.columns else "cost_price"
+                for code, qty, cost in zip(df["code"], df["qty"], df[cost_col], strict=True):
+                    if qty and float(qty) > 0:
+                        out.append(Position(code=str(code), qty=float(qty), avg_cost=float(cost)))
+        return out
+
+    def _query_positions(self, market: str) -> pd.DataFrame:
+        """Reuses the market's trade context; a failed one is closed so the next call reconnects."""
+        ctx = self._trade.get(market)
+        if ctx is None:
+            ctx = self._trade[market] = self._trade_factory(market)
+        try:
+            ret, df = ctx.position_list_query(trd_env=moomoo.TrdEnv.REAL, refresh_cache=True)
             if ret != moomoo.RET_OK:
                 raise RuntimeError(f"position query failed for {market}: {df}")
-            cost_col = "average_cost" if "average_cost" in df.columns else "cost_price"
-            for code, qty, cost in zip(df["code"], df["qty"], df[cost_col], strict=True):
-                if qty and float(qty) > 0:
-                    out.append(Position(code=str(code), qty=float(qty), avg_cost=float(cost)))
-        return out
+        except Exception:
+            self._trade.pop(market, None)
+            ctx.close()
+            raise
+        return df
 
     def health_check(self) -> str | None:
         """None when OpenD is connected and logged in, otherwise a short reason."""

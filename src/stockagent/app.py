@@ -12,7 +12,7 @@ from apscheduler.triggers.base import BaseTrigger
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
-from .analysis import AnalysisWorker
+from .analysis import AnalysisWorker, patch_openai_tool_call_content
 from .bot import PRIORITY_CANDIDATE, PRIORITY_PLAN_CMD, BotCommands, build_bot, send, start_bot
 from .chat import ChatEngine
 from .chat_tools import ChatDeps, ChatToolbox
@@ -231,7 +231,9 @@ class App:
         try:
             positions = await asyncio.to_thread(self.gateway.positions)
         except Exception as exc:
-            alert = self.health.problem("holdings", f"Could not read moomoo positions ({type(exc).__name__}).")
+            log.exception("reading moomoo positions failed")
+            reason = str(exc)[:200] or type(exc).__name__
+            alert = self.health.problem("holdings", f"Could not read moomoo positions: {reason}")
             if alert:
                 await self.notify(format_health(alert.text))
             return
@@ -430,6 +432,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)  # its request lines include the bot token
     settings = Settings()
+    patch_openai_tool_call_content()
     try:
         asyncio.run(App(settings).run())
     except KeyboardInterrupt:
