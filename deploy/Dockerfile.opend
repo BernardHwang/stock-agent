@@ -21,7 +21,9 @@ RUN curl -fsSL "${OPEND_URL}" -o /tmp/opend.tar.gz \
 
 COPY deploy/opend-entrypoint.sh /usr/local/bin/opend-entrypoint.sh
 RUN sed -i 's/\r$//' /usr/local/bin/opend-entrypoint.sh && chmod +x /usr/local/bin/opend-entrypoint.sh \
-    && useradd --system --create-home --home-dir /home/opend opend \
+    && (userdel -r ubuntu 2>/dev/null || true) \
+    && useradd --uid 1000 --create-home --home-dir /home/opend opend \
+    && mkdir -p /home/opend/.com.futunn.FutuOpenD /home/opend/.com.moomoo.OpenD \
     && chown -R opend:opend /opt/opend /home/opend
 
 USER opend

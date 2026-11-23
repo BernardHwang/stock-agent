@@ -11,9 +11,11 @@ services:
     platform: linux/amd64
     restart: unless-stopped
     init: true
+    stdin_open: true
+    tty: true
     env_file: ../.env
     volumes:
-      - ../data/opend:/home/opend/.com.moomoo.OpenD
+      - ../data/opend:/home/opend/.com.futunn.FutuOpenD
     networks:
       - stocknet
     logging:

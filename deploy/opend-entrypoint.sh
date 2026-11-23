@@ -56,5 +56,8 @@ if [ "$OPEND_DIR" != "/opt/opend" ]; then
 fi
 chmod 600 "$OPEND_DIR"/*.xml
 
+# Ensure FutuOpenD's local cache/appdata folder exists and is writable
+mkdir -p /home/opend/.com.futunn.FutuOpenD /home/opend/.com.moomoo.OpenD
+
 cd "$OPEND_DIR"
-exec "$OPEND_BIN"
+exec "$OPEND_BIN" -cfg_file="$OPEND_DIR/FutuOpenD.xml" -console=0
