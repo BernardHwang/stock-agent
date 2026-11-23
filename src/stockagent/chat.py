@@ -28,6 +28,7 @@ WARN_TEXT = "(Heads-up: 90% of today's chat limit is used.)"
 TIMEOUT_TEXT = "That took too long, please try again."
 QUOTA_TEXT = "AI quota reached for now. Try again later."
 EMPTY_TEXT = "Sorry, I don't have an answer for that."
+TOOL_CALL_FILLER = "Looking that up."
 
 TOOL_DESCRIPTIONS = {
     "get_quotes": "Live prices for one or more tickers (e.g. ['NVDA', '0700.HK']).",
@@ -234,9 +235,12 @@ class ChatEngine:
         for _ in range(MAX_ROUNDS):
             self._spend()
             ai = await llm.ainvoke(messages)
-            messages.append(ai)
             if not ai.tool_calls:
                 return _text(ai.content) or EMPTY_TEXT
+            if not _text(ai.content):
+                # Cloudflare Workers AI rejects (HTTP 400) an assistant tool-call message with null content.
+                ai = AIMessage(TOOL_CALL_FILLER, tool_calls=ai.tool_calls)
+            messages.append(ai)
             for call in ai.tool_calls:
                 result = await self._dispatch(call["name"], call.get("args") or {})
                 messages.append(ToolMessage(result, tool_call_id=call["id"]))

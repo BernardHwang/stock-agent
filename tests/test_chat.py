@@ -184,3 +184,11 @@ async def test_history_never_starts_with_bot_turn(store):
     eng, llm = engine(store, [AIMessage("ok")])
     await eng.reply("now")
     assert isinstance(llm.calls[0][1], HumanMessage)
+
+
+async def test_tool_call_turn_sent_back_with_text(store):
+    # Cloudflare Workers AI answers 400 to an assistant tool-call message whose content is null/empty.
+    eng, llm = engine(store, [tool_call("get_market_overview"), AIMessage("Calm day.")])
+    assert (await eng.reply("market?")).text == "Calm day."
+    sent_back = next(m for m in llm.calls[1] if isinstance(m, AIMessage))
+    assert sent_back.content and sent_back.tool_calls[0]["name"] == "get_market_overview"
