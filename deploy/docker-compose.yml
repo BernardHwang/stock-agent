@@ -7,7 +7,7 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile.opend
       args:
-        OPEND_VERSION: ${OPEND_VERSION:-9.6.5608}
+        OPEND_VERSION: ${OPEND_VERSION:-10.12.7208}
     platform: linux/amd64
     restart: unless-stopped
     init: true
@@ -15,7 +15,7 @@ services:
     tty: true
     env_file: ../.env
     volumes:
-      - ../data/opend:/home/opend/.com.futunn.FutuOpenD
+      - ../data/opend:/home/opend/.com.moomoo.OpenD
     networks:
       - stocknet
     logging:

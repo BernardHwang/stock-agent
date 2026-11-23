@@ -1,9 +1,10 @@
-# Runs official Moomoo OpenD (x86-64 Linux CLI) inside an isolated Docker container.
+# Runs official moomoo OpenD (x86-64 Linux CLI) inside an isolated Docker container.
 # Also works on ARM VMs via `platform: linux/amd64` + binfmt/qemu.
 FROM ubuntu:24.04
 
-ARG OPEND_VERSION=9.6.5608
-ARG OPEND_URL="https://softwaredownload.futunn.com/Futu_OpenD_${OPEND_VERSION}_Ubuntu18.04.tar.gz"
+# Use the moomoo build, not Futu_OpenD: a moomoo (FUTUMY) login was rejected as "account and password don't match" on the Futu build.
+ARG OPEND_VERSION=10.12.7208
+ARG OPEND_URL="https://softwaredownload.futustatic.com/moomoo_OpenD_${OPEND_VERSION}_Ubuntu18.04.tar.gz"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl tar telnet gettext-base \
@@ -11,11 +12,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /opt/opend
 
-# Download official Moomoo/Futu OpenD CLI release (contains FutuOpenD / OpenD inside Futu_OpenD-Ubuntu18.04-x64)
+# Download the official moomoo OpenD CLI release (binary OpenD + OpenD.xml in moomoo_OpenD_<ver>_Ubuntu18.04/)
 RUN curl -fsSL "${OPEND_URL}" -o /tmp/opend.tar.gz \
     && tar -xzf /tmp/opend.tar.gz --strip-components=1 -C /opt/opend \
     && rm -f /tmp/opend.tar.gz \
-    && OPEND_BIN="$(find /opt/opend -type f \( -name 'FutuOpenD' -o -name 'OpenD' \) | head -n 1)" \
+    && OPEND_BIN="$(find /opt/opend -type f -name 'OpenD' | head -n 1)" \
     && test -n "$OPEND_BIN" \
     && chmod +x "$OPEND_BIN"
 
@@ -23,7 +24,7 @@ COPY deploy/opend-entrypoint.sh /usr/local/bin/opend-entrypoint.sh
 RUN sed -i 's/\r$//' /usr/local/bin/opend-entrypoint.sh && chmod +x /usr/local/bin/opend-entrypoint.sh \
     && (userdel -r ubuntu 2>/dev/null || true) \
     && useradd --uid 1000 --create-home --home-dir /home/opend opend \
-    && mkdir -p /home/opend/.com.futunn.FutuOpenD /home/opend/.com.moomoo.OpenD \
+    && mkdir -p /home/opend/.com.moomoo.OpenD \
     && chown -R opend:opend /opt/opend /home/opend
 
 USER opend
