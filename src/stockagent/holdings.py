@@ -32,13 +32,14 @@ def sync_holdings(store: Store, positions: list[Position], now: datetime) -> lis
     costs = {p.code: p.avg_cost for p in positions}
     # A BUY plan's targets mean nothing for shares bought at a very different price (e.g. the first good read of
     # an existing portfolio): retire it and analyse the holding as it is.
-    for plan in store.plans_in({PlanState.OPEN, PlanState.HELD}):
-        if plan.code in costs and _bought_elsewhere(plan, costs[plan.code]):
-            plan.state = PlanState.CLOSED
-            store.update_plan(plan)
-            store.enqueue(plan.code, "new_holding", PRIORITY_NEW_HOLDING, now)
-            alerts.append(Alert(code=plan.code, kind="info", plan_id=plan.id,
-                                text=f"Your {plan.code} cost ({costs[plan.code]:.2f}) is far from plan #{plan.id}'s "
+    for stale in store.plans_in({PlanState.OPEN, PlanState.HELD}):
+        if stale.code in costs and _bought_elsewhere(stale, costs[stale.code]):
+            stale.state = PlanState.CLOSED
+            store.update_plan(stale)
+            store.enqueue(stale.code, "new_holding", PRIORITY_NEW_HOLDING, now)
+            alerts.append(Alert(code=stale.code, kind="info", plan_id=stale.id,
+                                text=f"Your {stale.code} cost ({costs[stale.code]:.2f}) is far from "
+                                     f"plan #{stale.id}'s "
                                      "buy zone, so I've retired that plan and queued a fresh analysis of the "
                                      "position."))
 
