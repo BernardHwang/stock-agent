@@ -4,7 +4,7 @@ import type { Env } from "./env";
 import { CALLBACK_PATH, handleCallback } from "./moomoo/oauth";
 import { ensureSetup } from "./setup";
 import { Store } from "./store";
-import { hasValidSecret, webhookSecret } from "./telegram";
+import { hasValidSecret, send, webhookSecret } from "./telegram";
 import { drainQueue, scheduleReviews } from "./workflow";
 
 export { AnalysisWorkflow } from "./workflow";
@@ -26,7 +26,14 @@ export default {
     if (req.method === "POST" && url.pathname === "/telegram") {
       const store = new Store(env.DB);
       if (!hasValidSecret(req, await webhookSecret(env, store))) return new Response("unauthorized", { status: 401 });
-      await guarded("telegram update", async () => handleUpdate(env, store, await req.json(), new Date(), url.origin));
+      try {
+        await handleUpdate(env, store, await req.json(), new Date(), url.origin);
+      } catch (e) {
+        const name = e instanceof Error ? e.name : "error";
+        console.error("telegram update failed", name); // the message may carry secrets
+        // Never leave the owner talking to silence; the error type only, no internal details.
+        await send(env, `Something went wrong (${name}). Please try again; if it keeps happening, check the Worker logs.`);
+      }
       return new Response("ok"); // always 200 so Telegram doesn't retry a failing update forever
     }
     return new Response("not found", { status: 404 });
