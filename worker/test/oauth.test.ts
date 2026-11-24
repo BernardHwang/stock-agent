@@ -104,6 +104,34 @@ describe("accessToken", () => {
     expect(await store.getSetting("moomoo_refresh")).toBe("r1");
   });
 
+  it("keeps the connection on an unexpected answer (firewall, maintenance page)", async () => {
+    const store = new Store(env.DB);
+    await store.setSetting("moomoo_refresh", "r1");
+    mockFetch((url) => telegramOk(url) ?? (url.endsWith("/oauth2/token") ? new Response("<html>maintenance</html>") : undefined));
+    await expect(accessToken(env, store, NOW)).rejects.toBeInstanceOf(MoomooUnavailable);
+    mockFetch(tokenRoute({ error: "forbidden" }, 403));
+    await expect(accessToken(env, store, NOW)).rejects.toBeInstanceOf(MoomooUnavailable);
+    expect(await store.getSetting("moomoo_refresh")).toBe("r1");
+  });
+
+  it("treats a 401 as an expired connection", async () => {
+    const store = new Store(env.DB);
+    await store.setSetting("moomoo_refresh", "r1");
+    mockFetch(tokenRoute({}, 401));
+    expect(await accessToken(env, store, NOW)).toBeNull();
+    expect(await store.getSetting("moomoo_refresh")).toBeNull();
+  });
+
+  it("keeps a rotated refresh token and its new expiry", async () => {
+    const store = new Store(env.DB);
+    await store.setSetting("moomoo_refresh", "r1");
+    mockFetch(tokenRoute({ access_token: "a2", refresh_token: "r2", refresh_token_expires_in: 30 * 86400,
+      scope: "trade:read quote:read", expires_in: 7200 }));
+    expect(await accessToken(env, store, NOW)).toBe("a2");
+    expect(await store.getSetting("moomoo_refresh")).toBe("r2");
+    expect(await store.getSetting("moomoo_until")).toBe("2026-12-24");
+  });
+
   it("drops a refreshed token that can trade", async () => {
     const store = new Store(env.DB);
     await store.setSetting("moomoo_refresh", "r1");

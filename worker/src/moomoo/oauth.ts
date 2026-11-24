@@ -61,7 +61,15 @@ async function saveAccess(store: Store, body: Record<string, unknown>, now: Date
   return String(body.access_token);
 }
 
-/** Starts a connection: remembers a one-time state and returns moomoo's consent URL. */
+/** Store a (new) refresh token and the local date its sign-in runs out. */
+async function saveRefresh(env: Env, store: Store, body: Record<string, unknown>, now: Date): Promise<void> {
+  const seconds = Number(body.refresh_token_expires_in);
+  const days = Number.isFinite(seconds) && seconds > 0 ? seconds / 86400 : DEFAULT_LIFE_DAYS;
+  await store.setSetting("moomoo_refresh", String(body.refresh_token));
+  await store.setSetting("moomoo_until", localParts(new Date(now.getTime() + days * 86_400_000), env.OWNER_TZ).date);
+}
+
+/** Starts a connection:remembers a one-time state and returns moomoo's consent URL. */
 export async function connectUrl(env: Env, store: Store, origin: string, now: Date): Promise<string> {
   const verifier = random(48);
   const state = random(24);
@@ -112,11 +120,8 @@ export async function handleCallback(req: Request, env: Env, store: Store, now: 
       "Send /moomoo and try again: allow reading positions and quotes, and leave trading OFF.");
     return page("Not connected", `The access was discarded because ${why}. Go back to Telegram for the next step.`);
   }
-  const seconds = Number(body.refresh_token_expires_in);
-  const days = Number.isFinite(seconds) && seconds > 0 ? seconds / 86400 : DEFAULT_LIFE_DAYS;
-  await store.setSetting("moomoo_refresh", body.refresh_token);
+  await saveRefresh(env, store, body, now);
   await store.setSetting("moomoo_scope", scope);
-  await store.setSetting("moomoo_until", localParts(new Date(now.getTime() + days * 86_400_000), env.OWNER_TZ).date);
   await saveAccess(store, body, now);
   await send(env, "moomoo connected, read-only. Send /moomoo sync to sync your positions now.");
   return page("Connected", "moomoo is connected, read-only. You can close this page and go back to Telegram.");
@@ -134,7 +139,10 @@ export async function accessToken(env: Env, store: Store, now: Date): Promise<st
   if (cached && until && new Date(until).getTime() - now.getTime() > REFRESH_MARGIN_MS) return cached;
 
   const { ok, status, body } = await tokenRequest(env, { grant_type: "refresh_token", refresh_token: refresh });
-  if (!ok && (status >= 500 || status === 429)) throw new MoomooUnavailable(`moomoo token endpoint answered ${status}`);
+  // Only a clear "this grant is no longer valid" ends the connection; anything else (maintenance page, firewall,
+  // rate limit) is a moomoo problem that pauses checks without making the owner sign in again.
+  const expired = status === 401 || (status === 400 && body.error === "invalid_grant");
+  if (!ok && !expired) throw new MoomooUnavailable(`moomoo token endpoint answered ${status}`);
   if (!ok) {
     await clear(store);
     await send(env, EXPIRED_TEXT);
@@ -145,6 +153,9 @@ export async function accessToken(env: Env, store: Store, now: Date): Promise<st
     await send(env, "moomoo returned an access that can trade, so I deleted the connection. " +
       "Send /moomoo to reconnect with trading switched off.");
     return null;
+  }
+  if (typeof body.refresh_token === "string" && body.refresh_token !== refresh) {
+    await saveRefresh(env, store, body, now); // moomoo rotated it: the old one stops working
   }
   return saveAccess(store, body, now);
 }
