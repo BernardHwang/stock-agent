@@ -1,5 +1,6 @@
 import { aiProbe, DEFAULT_MODEL, estimateNeurons } from "./aiprobe";
 import type { Env } from "./env";
+import { syncFromMoomoo } from "./holdings";
 import { apiGet, quotePost } from "./moomoo/api";
 import { accessToken, connectUrl, disconnect } from "./moomoo/oauth";
 import type { Store } from "./store";
@@ -76,7 +77,18 @@ async function holdingsText(store: Store): Promise<string> {
   return ["Your holdings:", ...positions.map((p) => `${p.code}: ${p.qty} @ ${p.avgCost?.toFixed(2) ?? "?"}`)].join("\n");
 }
 
-const PROBE_PREFIXES = ["/api/v1.0/quote/", "/api/v1.0/accounts/"];
+async function syncCommand(env: Env, store: Store, now: Date): Promise<void> {
+  try {
+    const result = await syncFromMoomoo(env, store, now);
+    if (!result) return send(env, "moomoo isn't connected. Send /moomoo to connect.");
+    const summary = `Synced ${result.count} position${result.count === 1 ? "" : "s"} from moomoo.`;
+    return send(env, [...result.messages, summary].join("\n\n"));
+  } catch {
+    return send(env, "moomoo didn't respond, so nothing was synced. Try /moomoo sync again in a moment.");
+  }
+}
+
+const PROBE_PREFIXES =["/api/v1.0/quote/", "/api/v1.0/accounts/"];
 
 /** Setup aid: show the raw shape of a read-only moomoo endpoint. `/moomoo probe [post] <path> [json]`. */
 async function probe(env: Env, store: Store, args: string[], now: Date): Promise<void> {
@@ -102,6 +114,7 @@ async function moomooCommand(env: Env, store: Store, args: string[], now: Date, 
   if (!env.MOOMOO_CLIENT_ID) return send(env, "moomoo isn't configured on this bot (no MOOMOO_CLIENT_ID).");
   const sub = args[0]?.toLowerCase() ?? "";
   if (sub === "probe") return probe(env, store, args.slice(1), now);
+  if (sub === "sync") return syncCommand(env, store, now);
   if (sub === "off") {
     await disconnect(store);
     return send(env, "moomoo disconnected and the stored access deleted. To fully revoke it, remove the app in " +
