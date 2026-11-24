@@ -1,10 +1,18 @@
 from datetime import datetime
 
-from .models import Alert, PlanState, Position
+from .models import Action, Alert, Plan, PlanState, Position
 from .store import Store
 
 PRIORITY_NEW_HOLDING = 1
 EMPTY_READ_KEY = "positions_empty_read"
+COST_MATCH_TOLERANCE = 0.15  # a position bought further from the plan's buy zone wasn't bought on that plan
+
+
+def _bought_elsewhere(plan: Plan, avg_cost: float) -> bool:
+    f = plan.fields
+    if plan.state == PlanState.TRIGGERED or f.action != Action.BUY or f.entry_low is None or f.entry_high is None:
+        return False
+    return not f.entry_low * (1 - COST_MATCH_TOLERANCE) <= avg_cost <= f.entry_high * (1 + COST_MATCH_TOLERANCE)
 
 
 def sync_holdings(store: Store, positions: list[Position], now: datetime) -> list[Alert]:
@@ -21,8 +29,23 @@ def sync_holdings(store: Store, positions: list[Position], now: datetime) -> lis
     if store.kv_get(EMPTY_READ_KEY):
         store.kv_set(EMPTY_READ_KEY, "")
 
+    costs = {p.code: p.avg_cost for p in positions}
+    # A BUY plan's targets mean nothing for shares bought at a very different price (e.g. the first good read of
+    # an existing portfolio): retire it and analyse the holding as it is.
+    for plan in store.plans_in({PlanState.OPEN, PlanState.HELD}):
+        if plan.code in costs and _bought_elsewhere(plan, costs[plan.code]):
+            plan.state = PlanState.CLOSED
+            store.update_plan(plan)
+            store.enqueue(plan.code, "new_holding", PRIORITY_NEW_HOLDING, now)
+            alerts.append(Alert(code=plan.code, kind="info", plan_id=plan.id,
+                                text=f"Your {plan.code} cost ({costs[plan.code]:.2f}) is far from plan #{plan.id}'s "
+                                     "buy zone, so I've retired that plan and queued a fresh analysis of the "
+                                     "position."))
+
     for code in sorted(current - previous):
         plan = store.active_plan(code)
+        if plan is None and any(a.code == code for a in alerts):
+            continue
         if plan is not None and plan.state in (PlanState.OPEN, PlanState.TRIGGERED):
             plan.state = PlanState.HELD
             store.update_plan(plan)

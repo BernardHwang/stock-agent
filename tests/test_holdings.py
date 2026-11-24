@@ -80,3 +80,24 @@ def test_hold_analysis_for_untracked_holding_creates_held_plan(store):
     hold = PlanFields(action="HOLD", tp=130, sl=90, confidence="medium", holding_months=6, reasoning="r")
     p = apply_new_analysis(store, "US.AMD", hold, "new_holding", NOW, held=True)
     assert p.id is not None and p.state == PlanState.HELD
+
+
+def test_holding_bought_far_from_buy_zone_gets_fresh_plan(store):
+    apply_new_analysis(store, "US.NVDA", buy(), "weekly", NOW)  # zone 100-105
+    alerts = sync_holdings(store, [Position(code="US.NVDA", qty=10, avg_cost=358)], NOW)
+    assert store.active_plan("US.NVDA") is None
+    assert store.plans_in({PlanState.CLOSED})[0].code == "US.NVDA"
+    assert store.pending_count() == 1 and len(alerts) == 1
+
+
+def test_held_buy_plan_far_from_cost_is_replaced(store):
+    # Repairs plans linked before the cost check existed.
+    apply_new_analysis(store, "US.NVDA", buy(), "weekly", NOW)
+    plan = store.active_plan("US.NVDA")
+    plan.state = PlanState.HELD
+    store.update_plan(plan)
+    store.save_positions([Position(code="US.NVDA", qty=10, avg_cost=358)], NOW)
+    sync_holdings(store, [Position(code="US.NVDA", qty=10, avg_cost=358)], NOW)
+    assert store.active_plan("US.NVDA") is None and store.pending_count() == 1
+    assert sync_holdings(store, [Position(code="US.NVDA", qty=10, avg_cost=358)], NOW) == []
+    assert store.pending_count() == 1
