@@ -1,5 +1,6 @@
 import type { Env } from "./env";
-import { connectUrl, disconnect } from "./moomoo/oauth";
+import { apiGet, quotePost } from "./moomoo/api";
+import { accessToken, connectUrl, disconnect } from "./moomoo/oauth";
 import type { Store } from "./store";
 import { send, type Update } from "./telegram";
 import { inPriceWindow, inUsSession } from "./time";
@@ -28,7 +29,7 @@ export async function handleUpdate(env: Env, store: Store, update: unknown, now:
     case "holdings":
       return send(env, await holdingsText(store));
     case "moomoo":
-      return moomooCommand(env, store, args[0]?.toLowerCase() ?? "", now, origin);
+      return moomooCommand(env, store, args, now, origin);
     default:
       return send(env, UNKNOWN);
   }
@@ -59,8 +60,32 @@ async function holdingsText(store: Store): Promise<string> {
   return ["Your holdings:", ...positions.map((p) => `${p.code}: ${p.qty} @ ${p.avgCost?.toFixed(2) ?? "?"}`)].join("\n");
 }
 
-async function moomooCommand(env: Env, store: Store, sub: string, now: Date, origin: string): Promise<void> {
+const PROBE_PREFIXES = ["/api/v1.0/quote/", "/api/v1.0/accounts/"];
+
+/** Setup aid: show the raw shape of a read-only moomoo endpoint. `/moomoo probe [post] <path> [json]`. */
+async function probe(env: Env, store: Store, args: string[], now: Date): Promise<void> {
+  const post = args[0]?.toLowerCase() === "post";
+  const path = (post ? args[1] : args[0]) ?? "";
+  if (!PROBE_PREFIXES.some((p) => path.startsWith(p))) {
+    return send(env, "Probe reads only /api/v1.0/quote/ and /api/v1.0/accounts/ paths.");
+  }
+  const token = await accessToken(env, store, now);
+  if (!token) return send(env, "moomoo isn't connected. Send /moomoo first.");
+  try {
+    const data = post ? await quotePost(token, path, JSON.parse(args.slice(2).join(" ") || "{}") as object)
+      : await apiGet(token, path);
+    // Mask account numbers (and any other long id) to their last 4 digits.
+    const text = JSON.stringify(data).replace(/"?(\d{9,})"?/g, (_m, digits: string) => `"…${digits.slice(-4)}"`);
+    return send(env, text.slice(0, 1500));
+  } catch (e) {
+    return send(env, `Probe failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+async function moomooCommand(env: Env, store: Store, args: string[], now: Date, origin: string): Promise<void> {
   if (!env.MOOMOO_CLIENT_ID) return send(env, "moomoo isn't configured on this bot (no MOOMOO_CLIENT_ID).");
+  const sub = args[0]?.toLowerCase() ?? "";
+  if (sub === "probe") return probe(env, store, args.slice(1), now);
   if (sub === "off") {
     await disconnect(store);
     return send(env, "moomoo disconnected and the stored access deleted. To fully revoke it, remove the app in " +
