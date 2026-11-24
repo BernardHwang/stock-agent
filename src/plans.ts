@@ -1,4 +1,4 @@
-/** Plan types and validation, ported unchanged from src/stockagent/models.py. */
+/** Plan types and validation, ported unchanged from the Python app (src/stockagent/models.py at 9c81be3). */
 
 export type PlanAction = "BUY" | "HOLD" | "TRIM" | "EXIT";
 export type PlanState = "OPEN" | "TRIGGERED" | "HELD" | "EXPIRED" | "CLOSED";

@@ -1,4 +1,4 @@
-/** Reconcile plans with what the owner holds in moomoo. Ported from src/stockagent/holdings.py. */
+/** Reconcile plans with what the owner holds in moomoo. Ported from the Python app (src/stockagent/holdings.py at 9c81be3). */
 import type { Env } from "./env";
 import { positions } from "./moomoo/api";
 import { accessToken } from "./moomoo/oauth";

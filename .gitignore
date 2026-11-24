@@ -1,12 +1,7 @@
+node_modules/
+.wrangler/
+.dev.vars
+# Local leftovers from the old Python app (secrets, SQLite data, OpenD login); never commit.
 .env
 data/
-.venv/
-__pycache__/
-*.pyc
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
 docs/superpowers/
-worker/node_modules/
-worker/.wrangler/
-worker/.dev.vars
