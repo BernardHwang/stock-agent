@@ -1,5 +1,5 @@
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -448,6 +448,7 @@ async def test_extraction_rate_limit_reuses_saved_report(store):
 
     w, sent = make(store, run=lambda symbol, day, s: runs.append(symbol) or "report for NVDA", extract=extract)
     await w.drain()
+    w.now = lambda: NOW + timedelta(hours=1)  # past the rate-limit backoff
     await w.drain()
     assert runs == ["NVDA"]  # the expensive TradingAgents run is not repeated
     assert attempts == ["report for NVDA", "report for NVDA"]
@@ -526,3 +527,71 @@ def test_concurrent_model_calls_are_limited(monkeypatch):
     for t in threads:
         t.join()
     assert peak[0] == 2
+
+
+async def test_rate_limit_mid_run_still_uses_the_daily_budget(store):
+    store.enqueue("US.A", "weekly", 3, NOW)
+    clock = [NOW]
+
+    def run(*a):
+        clock[0] = NOW + timedelta(minutes=5)  # dozens of billed calls before the 429
+        raise RateLimited("429 rate limit")
+
+    w, _ = make(store, run=run)
+    w.now = lambda: clock[0]
+    await w.drain()
+    assert store.count_runs_on(NOW.date(), "Asia/Kuala_Lumpur") == 1 and store.pending_count() == 1
+
+
+async def test_rate_limit_pauses_the_queue(store):
+    store.enqueue("US.A", "weekly", 3, NOW)
+    runs = []
+
+    def run(symbol, day, s):
+        runs.append(symbol)
+        if len(runs) == 1:
+            raise RateLimited("429 rate limit")
+        return "report"
+
+    w, _ = make(store, run=run)
+    await w.drain()
+    await w.drain()
+    assert runs == ["A"]
+    w.now = lambda: NOW + timedelta(hours=1)
+    await w.drain()
+    assert runs == ["A", "A"]
+
+
+async def test_failed_extraction_keeps_the_report_for_the_next_request(store):
+    store.enqueue("US.NVDA", "weekly", 3, NOW)
+    runs, attempts = [], []
+
+    def extract(report, code, held, s):
+        attempts.append(report)
+        if len(attempts) == 1:
+            raise ValueError("model returned broken JSON")
+        return buy()
+
+    w, _ = make(store, run=lambda symbol, day, s: runs.append(symbol) or "report", extract=extract)
+    await w.drain()
+    store.enqueue("US.NVDA", "chat", 0, NOW)
+    await w.drain()
+    assert runs == ["NVDA"] and store.active_plan("US.NVDA") is not None
+
+
+async def test_day_old_report_is_not_reused(store):
+    store.enqueue("US.NVDA", "weekly", 3, NOW)
+    runs, attempts = [], []
+
+    def extract(report, code, held, s):
+        attempts.append(report)
+        if len(attempts) == 1:
+            raise ValueError("broken JSON")
+        return buy()
+
+    w, _ = make(store, run=lambda symbol, day, s: runs.append(symbol) or "report", extract=extract)
+    await w.drain()
+    w.now = lambda: NOW + timedelta(days=2)
+    store.enqueue("US.NVDA", "chat", 0, NOW)
+    await w.drain()
+    assert runs == ["NVDA", "NVDA"]

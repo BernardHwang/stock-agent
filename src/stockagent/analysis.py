@@ -9,7 +9,7 @@ import re
 import sys
 import threading
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from pydantic import BaseModel
@@ -269,6 +269,12 @@ def _plan_errors(fields: PlanFields, price: float | None) -> list[str]:
     return validate_fields(fields) or validate_against_price(fields, price)
 
 
+BACKOFF_KEY = "ai_backoff_until"
+RATE_LIMIT_BACKOFF = timedelta(minutes=30)
+REFUND_WINDOW = timedelta(minutes=1)  # a 429 this early came before most of the run's model calls
+REPORT_REUSE_WINDOW = timedelta(days=1)
+
+
 class SavedReport(BaseModel):
     at: datetime
     text: str
@@ -327,6 +333,9 @@ class AnalysisWorker:
     async def drain(self) -> None:
         async with self._lock:  # one analysis at a time
             tz = self.settings.tz
+            until = self.store.kv_get(BACKOFF_KEY)
+            if until and self.now() < datetime.fromisoformat(until):
+                return
             while self.store.count_runs_on(local_date(self.now(), tz), tz) < self.settings.max_runs_per_day:
                 item = self.store.next_queue_item()
                 if item is None:
@@ -340,8 +349,8 @@ class AnalysisWorker:
         held = next((p for p in self.store.last_positions() if p.code == code), None)
         pending_key = f"extract_pending:{code}"
         saved = load_report(self.store, code) if self.store.kv_get(pending_key) else None
-        if saved is not None:
-            # The last run's extraction hit a rate limit: retry it from the saved report instead of re-running.
+        if saved is not None and now - saved.at < REPORT_REUSE_WINDOW:
+            # The last run's extraction failed: retry it from the saved report instead of re-running.
             report = saved.text
             price = await self._price(code) or saved.price
         else:
@@ -349,8 +358,8 @@ class AnalysisWorker:
                 self.store.record_run(code, now)
                 report = await asyncio.to_thread(self.run, to_yf(code), now.date().isoformat(), self.settings)
             except Exception as exc:
-                if is_rate_limit(exc):
-                    self.store.forget_run(code, now)  # refused before any work: don't spend the daily budget
+                if is_rate_limit(exc) and self.now() - now < REFUND_WINDOW:
+                    self.store.forget_run(code, now)  # refused before any real work: don't spend the daily budget
                 return await self._failed(item_id, code, exc)
             # Save before extracting: the report is the expensive part and chat can still use it.
             price = await self._price(code)
@@ -358,7 +367,7 @@ class AnalysisWorker:
         try:
             fields = await asyncio.to_thread(self.extract, report, code, held, self.settings)
         except Exception as exc:
-            self.store.kv_set(pending_key, "1" if is_rate_limit(exc) else "")
+            self.store.kv_set(pending_key, "1")
             return await self._failed(item_id, code, exc)
         self.store.kv_set(pending_key, "")
 
@@ -402,6 +411,7 @@ class AnalysisWorker:
         """Returns False when draining should stop (AI quota exhausted)."""
         if is_rate_limit(exc):
             self.store.requeue(item_id)
+            self.store.kv_set(BACKOFF_KEY, (self.now() + RATE_LIMIT_BACKOFF).isoformat())
             alert = self.health.problem("ai_quota", "AI quota reached. Remaining analyses will retry later. "
                                                     f"Provider said: {error_detail(exc)}")
             if alert:
