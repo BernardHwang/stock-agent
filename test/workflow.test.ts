@@ -73,7 +73,7 @@ describe("executeItem", () => {
     return it;
   };
 
-  it("puts a rate-limited analysis back, pauses for 30 minutes, and refunds an early refusal", async () => {
+  it("puts a rate-limited analysis back, pauses for 30 minutes, and refunds a run with no paid AI call", async () => {
     const store = new Store(env.DB);
     const it = await item(store);
     await executeItem(env, store, it.id, NOW.toISOString(), () => later(0.5), async () => { throw new AiRateLimited("3040"); });
@@ -82,9 +82,10 @@ describe("executeItem", () => {
     expect(await store.countRunsOn("2026-11-24", "Asia/Kuala_Lumpur")).toBe(0);
   });
 
-  it("keeps the run counted when the refusal came late", async () => {
+  it("keeps the run counted once an AI call was paid for", async () => {
     const store = new Store(env.DB);
     const it = await item(store);
+    await store.setSetting(`analysis_paid:${it.id}`, "1");
     await executeItem(env, store, it.id, NOW.toISOString(), () => later(5), async () => { throw new AiRateLimited("3040"); });
     expect(await store.countRunsOn("2026-11-24", "Asia/Kuala_Lumpur")).toBe(1);
   });
@@ -118,5 +119,58 @@ describe("triggers", () => {
     await scheduleReviews(env, store, monday8pm);
     await scheduleReviews(env, store, new Date("2026-11-30T12:01:00Z")); // a minute later: already done
     expect((await store.pendingItems()).map((i) => [i.code, i.reason])).toEqual([["US.A", "weekly"], ["US.B", "weekly"]]);
+  });
+});
+
+describe("review fixes", () => {
+  const running = async (store: Store) => {
+    await store.enqueue("US.A", "chat", 0, NOW);
+    const it = (await store.nextQueued())!;
+    await store.setQueueStatus(it.id, "running");
+    await store.recordRun("US.A", NOW);
+    return it;
+  };
+
+  it("recognises a rate limit that Workflows re-created as a plain Error", async () => {
+    const store = new Store(env.DB);
+    const it = await running(store);
+    await executeItem(env, store, it.id, NOW.toISOString(), () => later(3),
+      async () => { throw new Error("AiRateLimited: 3040: Capacity temporarily exceeded"); });
+    expect((await store.queueItem(it.id))!.status).toBe("pending");
+    expect(await store.getSetting("ai_paused_until")).toBe(later(33).toISOString());
+  });
+
+  it("refunds the run and names the stock when it fails before any AI call", async () => {
+    const store = new Store(env.DB);
+    const it = await running(store);
+    const sent = mockFetch(telegramOk);
+    await executeItem(env, store, it.id, NOW.toISOString(), () => later(3), async () => { throw new Error("no price for US.A"); });
+    expect(await store.countRunsOn("2026-11-24", "Asia/Kuala_Lumpur")).toBe(0);
+    expect(sentTexts(sent)[0]).toContain("US.A");
+  });
+
+  it("terminates a stuck Workflow, and a late failure can't bring the item back", async () => {
+    const store = new Store(env.DB);
+    await store.enqueue("US.A", "chat", 0, NOW);
+    const id = (await store.nextQueued())!.id;
+    const terminate = vi.fn(async () => {});
+    const get = vi.fn(async (_id: string) => ({ terminate }));
+    const create = vi.fn(async (_o: { id: string }) => ({ id: "x" }));
+    const e = { ...env, ANALYSIS: { create, get } as unknown as Workflow } as Env;
+    mockFetch(telegramOk);
+    await drainQueue(e, store, NOW);
+    const instanceId = create.mock.calls[0]![0].id;
+    expect(instanceId).toMatch(/^item-/);
+    await drainQueue(e, store, later(21));
+    expect(get).toHaveBeenCalledWith(instanceId);
+    expect(terminate).toHaveBeenCalled();
+    await executeItem(e, store, id, NOW.toISOString(), () => later(22), async () => { throw new Error("3040 capacity"); });
+    expect((await store.queueItem(id))!.status).toBe("failed");
+  });
+
+  it("starts analyses only below 8,000 neurons, leaving room to finish one", async () => {
+    const store = new Store(env.DB);
+    await store.setSetting(`neurons:${NOW.toISOString().slice(0, 10)}`, "8100");
+    expect((await analysisGate(env, store, NOW)).wait).toBe("neurons");
   });
 });

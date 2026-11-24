@@ -160,6 +160,12 @@ export class Store {
     await this.db.prepare("UPDATE queue SET status = ? WHERE id = ?").bind(status, id).run();
   }
 
+  /** Change the status only if it is still ``from``; true when it changed (guards against late, stale updates). */
+  async setQueueStatusIf(id: number, from: QueueStatus, to: QueueStatus): Promise<boolean> {
+    const res = await this.db.prepare("UPDATE queue SET status = ? WHERE id = ? AND status = ?").bind(to, id, from).run();
+    return res.meta.changes > 0;
+  }
+
   async runningItems(): Promise<QueueItem[]> {
     const { results } = await this.db.prepare("SELECT * FROM queue WHERE status = 'running' ORDER BY id").all<QueueRow>();
     return results.map(toQueueItem);

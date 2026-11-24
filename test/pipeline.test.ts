@@ -107,3 +107,22 @@ describe("runAnalysis", () => {
     expect(await store.planFor("US.MDB")).toMatchObject({ state: "HELD", action: "HOLD" });
   });
 });
+
+describe("runAnalysis bookkeeping", () => {
+  it("marks the run as paid once an AI call succeeded", async () => {
+    const { store, item, e, deps } = await setup(goodPlan);
+    mockFetch(telegramOk);
+    expect(await store.getSetting(`analysis_paid:${item.id}`)).toBeNull();
+    await runAnalysis(fakeStep(), e, store, item, NOW, deps);
+    expect(await store.getSetting(`analysis_paid:${item.id}`)).toBe("1");
+  });
+
+  it("saves nothing and sends nothing when the analysis was stopped meanwhile", async () => {
+    const { store, item, e, deps } = await setup(goodPlan);
+    const sent = mockFetch(telegramOk);
+    await store.setQueueStatus(item.id, "failed"); // stopped by the stuck-run guard
+    await runAnalysis(fakeStep(), e, store, item, NOW, deps);
+    expect(await store.planFor("US.MDB")).toBeNull();
+    expect(sentTexts(sent)).toEqual([]);
+  });
+});

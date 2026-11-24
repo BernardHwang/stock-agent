@@ -4,7 +4,19 @@ import type { Env } from "./env";
 import type { Store } from "./store";
 
 /** Cloudflare refused for capacity (3040), the daily allowance (3036) or rate limiting (429). */
-export class AiRateLimited extends Error {}
+export class AiRateLimited extends Error {
+  constructor(message: string) {
+    super(`AiRateLimited: ${message}`); // the marker survives Workflows re-creating the error as a plain Error
+    this.name = "AiRateLimited";
+  }
+}
+
+/** True for AiRateLimited, also after a Workflow step re-threw it as a plain Error with only the message kept. */
+export function isRateLimited(e: unknown): boolean {
+  if (e instanceof AiRateLimited) return true;
+  const text = e instanceof Error ? `${e.name} ${e.message}` : String(e);
+  return /AiRateLimited/.test(text) || RATE_LIMIT.test(text);
+}
 
 export type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
 export interface ToolDef {

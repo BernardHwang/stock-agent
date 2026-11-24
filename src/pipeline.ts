@@ -47,9 +47,11 @@ export async function runAnalysis(step: Step, env: Env, store: Store, item: Queu
     ? `The investor holds ${position.qty} shares at an average cost of ${position.avgCost?.toFixed(2) ?? "unknown"}.`
     : "The investor does not hold this stock.";
 
-  const call = (role: Role, context: string) => step.do(role, () =>
+  // Once an AI call has been paid for, a later failure keeps the run counted against the daily limit.
+  const paid = <T>(answer: T) => store.setSetting(`analysis_paid:${item.id}`, "1").then(() => answer);
+  const call = (role: Role, context: string) => step.do(role, async () => paid(await
     ask(env, store, DEEP_ROLES.has(role) ? env.DEEP_MODEL || DEFAULT_DEEP_MODEL : env.QUICK_MODEL || DEFAULT_QUICK_MODEL,
-      SKILLS[role], `Stock: ${code}\n${holding}\n\n${sheet.text}${context ? `\n\n${context}` : ""}`, MAX_TOKENS[role], now));
+      SKILLS[role], `Stock: ${code}\n${holding}\n\n${sheet.text}${context ? `\n\n${context}` : ""}`, MAX_TOKENS[role], now)));
 
   const market = await call("market_analyst", "");
   const news = await call("news_analyst", "");
@@ -78,7 +80,8 @@ export async function runAnalysis(step: Step, env: Env, store: Store, item: Queu
   ].join("\n\n");
 
   await step.do("save", async () => {
-    if ((await store.queueItem(item.id))?.status === "done") return true; // already saved by an earlier attempt
+    // Save only for a run still in progress: not twice (done), and not after it was stopped (failed).
+    if ((await store.queueItem(item.id))?.status !== "running") return true;
     await store.saveReport(code, report, sheet.price, now);
     let message: string;
     if ("fields" in outcome) {
