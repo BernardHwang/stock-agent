@@ -3,6 +3,10 @@
 	"name": "stock-agent",
 	"main": "src/index.ts",
 	"compatibility_date": "2026-11-01",
+	// Request and cron logs in the dashboard (Observability tab); the free plan includes 200k events a day.
+	"observability": {
+		"enabled": true
+	},
 	"triggers": {
 		"crons": ["* * * * *"]
 	},
