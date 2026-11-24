@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import sys
+import threading
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -33,6 +34,9 @@ _LC_PROVIDER = {"google": "google_genai", "cloudflare": "openai"}
 
 
 TOOL_CALL_FILLER = "Looking that up."
+MAX_CONCURRENT_LLM_CALLS = 2
+LLM_MAX_RETRIES = 5  # the SDK backs off exponentially; Cloudflare's 429 "capacity exceeded" clears within seconds
+MAX_TOOL_ROUNDS = 8  # per analyst; TradingAgents' default of 20 lets a confused small model burn the daily quota
 
 
 def patch_openai_tool_messages() -> None:
@@ -56,6 +60,27 @@ def patch_openai_tool_messages() -> None:
 
     _get_request_payload._cloudflare_safe = True  # type: ignore[attr-defined]
     ChatOpenAI._get_request_payload = _get_request_payload  # type: ignore[method-assign]
+
+
+def limit_concurrent_requests(limit: int = MAX_CONCURRENT_LLM_CALLS) -> None:
+    """Cap simultaneous synchronous model calls process-wide.
+
+    TradingAgents starts every analyst at once, each looping over tools from its own thread. That burst is what
+    Cloudflare answers with HTTP 429 ("capacity exceeded"), also failing the owner's chat sent meanwhile.
+    """
+    from langchain_openai import ChatOpenAI
+
+    original = ChatOpenAI._generate
+    if getattr(original, "_limited", False):
+        return
+    gate = threading.BoundedSemaphore(limit)
+
+    def _generate(self, *args, **kwargs):
+        with gate:
+            return original(self, *args, **kwargs)
+
+    _generate._limited = True  # type: ignore[attr-defined]
+    ChatOpenAI._generate = _generate  # type: ignore[method-assign]
 
 
 def _cloudflare_safe_messages(messages: list[dict]) -> list[dict]:
@@ -101,6 +126,7 @@ def llm_client_kwargs(settings: Settings) -> dict[str, Any]:
             )
         if settings.cloudflare_api_token:
             kw["api_key"] = settings.cloudflare_api_token.get_secret_value()
+        kw["max_retries"] = LLM_MAX_RETRIES
     if settings.openai_base_url:
         kw["base_url"] = settings.openai_base_url
     return kw
@@ -151,8 +177,9 @@ def run_tradingagents(symbol: str, day: str, settings: Settings) -> str:
             extra_cfg["backend_url"] = (
                 f"https://api.cloudflare.com/client/v4/accounts/{settings.cloudflare_account_id}/ai/v1"
             )
-        if settings.cloudflare_api_token and not os.environ.get("OPENAI_API_KEY"):
+        if settings.cloudflare_api_token:  # always: a leftover OpenAI key must not be sent to Cloudflare
             os.environ["OPENAI_API_KEY"] = settings.cloudflare_api_token.get_secret_value()
+        extra_cfg.update(llm_max_retries=LLM_MAX_RETRIES, max_tool_rounds=MAX_TOOL_ROUNDS)
     elif settings.openai_base_url:
         extra_cfg["backend_url"] = settings.openai_base_url
     cfg.update(
@@ -403,6 +430,7 @@ def _cli() -> None:
     load_dotenv()
     logging.basicConfig(level=logging.INFO)
     patch_openai_tool_messages()
+    limit_concurrent_requests()
     s = Settings()
     code = sys.argv[1] if "." in sys.argv[1] else f"US.{sys.argv[1]}"
     held = read_held_position(code, s)

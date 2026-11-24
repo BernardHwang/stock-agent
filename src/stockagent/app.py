@@ -12,7 +12,7 @@ from apscheduler.triggers.base import BaseTrigger
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
-from .analysis import AnalysisWorker, patch_openai_tool_messages
+from .analysis import AnalysisWorker, limit_concurrent_requests, patch_openai_tool_messages
 from .bot import PRIORITY_CANDIDATE, PRIORITY_PLAN_CMD, BotCommands, build_bot, send, start_bot
 from .chat import ChatEngine
 from .chat_tools import ChatDeps, ChatToolbox
@@ -444,6 +444,7 @@ def main() -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)  # its request lines include the bot token
     settings = Settings()
     patch_openai_tool_messages()
+    limit_concurrent_requests()
     try:
         asyncio.run(App(settings).run())
     except KeyboardInterrupt:

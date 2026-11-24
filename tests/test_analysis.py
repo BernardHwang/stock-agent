@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 
 import pytest
@@ -203,7 +204,7 @@ def test_cloudflare_llm_client_kwargs():
                  quick_model="@cf/meta/llama-3.1-8b-instruct-fast")
     kw = analysis.llm_client_kwargs(s)
     assert kw["base_url"] == "https://api.cloudflare.com/client/v4/accounts/acc123/ai/v1"
-    assert kw["api_key"] == "tok456"
+    assert kw["api_key"] == "tok456" and kw["max_retries"] == analysis.LLM_MAX_RETRIES
     assert s.effective_chat_model == "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
 
 
@@ -480,3 +481,48 @@ def test_read_held_position_closes_its_own_gateway(monkeypatch):
     monkeypatch.setattr(moomoo_gw, "MoomooGateway", FakeGw)
     assert analysis.read_held_position("US.NVDA", settings()).qty == 1
     assert closed == [True]  # moomoo SDK threads are non-daemon: an open context keeps the CLI alive
+
+
+def test_cloudflare_run_caps_tool_rounds_retries_and_uses_cloudflare_key(monkeypatch):
+    captured = {}
+
+    class FakeGraph:
+        def __init__(self, selected_analysts, debug, config):
+            captured.update(config)
+
+        def propagate(self, symbol, day):
+            return {"final_trade_decision": "BUY"}, "Buy"
+
+    monkeypatch.setattr(analysis, "TradingAgentsGraph", FakeGraph)
+    monkeypatch.setenv("OPENAI_API_KEY", "leftover-openai-key")
+    analysis.run_tradingagents("NVDA", "2026-11-06", settings(llm_provider="cloudflare", cloudflare_account_id="a",
+                                                              cloudflare_api_token="cf-token"))
+    assert captured["max_tool_rounds"] == analysis.MAX_TOOL_ROUNDS
+    assert captured["llm_max_retries"] == analysis.LLM_MAX_RETRIES
+    assert os.environ["OPENAI_API_KEY"] == "cf-token"
+
+
+def test_concurrent_model_calls_are_limited(monkeypatch):
+    import threading
+    import time
+
+    from langchain_openai import ChatOpenAI
+
+    active, peak, lock = [0], [0], threading.Lock()
+
+    def fake_generate(self, *a, **kw):
+        with lock:
+            active[0] += 1
+            peak[0] = max(peak[0], active[0])
+        time.sleep(0.05)
+        with lock:
+            active[0] -= 1
+
+    monkeypatch.setattr(ChatOpenAI, "_generate", fake_generate)
+    analysis.limit_concurrent_requests(2)
+    threads = [threading.Thread(target=ChatOpenAI._generate, args=(None,)) for _ in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert peak[0] == 2
