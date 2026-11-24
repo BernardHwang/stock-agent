@@ -89,6 +89,17 @@ describe("ensureSetup", () => {
     expect(named(calls, "register")).toHaveLength(1);
   });
 
+  it("registers its own moomoo client once a configured one is removed", async () => {
+    telegramUp = true;
+    const store = new Store(env.DB);
+    const calls = mockFetch(services);
+    await ensureSetup(fresh({ MOOMOO_CLIENT_ID: "manual-with-wrong-redirect" }), store, NOW);
+    expect(named(calls, "register")).toEqual([]);
+    await ensureSetup(fresh(), store, plusMin(1)); // owner deleted the MOOMOO_CLIENT_ID secret
+    expect(named(calls, "register")).toHaveLength(1);
+    expect(await clientId(fresh(), store)).toBe("registered-client");
+  });
+
   it("keeps a configured moomoo client id", async () => {
     telegramUp = true;
     const calls = mockFetch(services);

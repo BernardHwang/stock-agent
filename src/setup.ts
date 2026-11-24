@@ -25,10 +25,14 @@ async function setupTelegram(env: Env, store: Store, url: string): Promise<boole
   return hooked && menu;
 }
 
-async function setupMoomoo(env: Env, store: Store, url: string): Promise<void> {
-  if (env.MOOMOO_CLIENT_ID) return; // configured by hand
-  if ((await clientId(env, store)) && (await store.getSetting("moomoo_client_for")) === url) return;
+/** True when this Worker should register its own moomoo client for ``url``. */
+async function needsMoomooClient(env: Env, store: Store, url: string): Promise<boolean> {
+  if (env.MOOMOO_CLIENT_ID) return false; // configured by hand
   // A client is tied to its redirect address, so a new address needs a new client (and a fresh /moomoo sign-in).
+  return !((await clientId(env, store)) && (await store.getSetting("moomoo_client_for")) === url);
+}
+
+async function setupMoomoo(env: Env, store: Store, url: string): Promise<void> {
   await store.setSetting("moomoo_client_id", await registerClient(url + CALLBACK_PATH));
   await store.setSetting("moomoo_client_for", url);
   await send(env, "moomoo app registered for this bot. Send /moomoo to connect read-only.");
@@ -42,10 +46,10 @@ export async function ensureSetup(env: Env, store: Store, now: Date): Promise<vo
   if ((await store.getSetting("setup_telegram")) !== done && (await store.markOnce(`setup_try:telegram:${url}:${hour(now)}`, now))) {
     if (await setupTelegram(env, store, url)) await store.setSetting("setup_telegram", done);
   }
-  if ((await store.getSetting("setup_moomoo")) !== done && (await store.markOnce(`setup_try:moomoo:${url}:${hour(now)}`, now))) {
+  // Decided from what's stored, not a "done" flag, so removing a hand-set MOOMOO_CLIENT_ID later still registers.
+  if ((await needsMoomooClient(env, store, url)) && (await store.markOnce(`setup_try:moomoo:${url}:${hour(now)}`, now))) {
     try {
       await setupMoomoo(env, store, url);
-      await store.setSetting("setup_moomoo", done);
     } catch (e) {
       console.error("moomoo client registration failed", e instanceof Error ? e.name : typeof e);
     }
