@@ -64,7 +64,48 @@ def yf_news(code: str) -> list[NewsItem]:
     return parse_yf_news(yf.Ticker(to_yf(code)).news or [])
 
 
-def poll_news(store: Store, codes: list[str], fetch: FetchFn = yf_news) -> list[tuple[str, NewsItem]]:
+def yf_company_name(code: str) -> str | None:
+    info = yf.Ticker(to_yf(code)).info or {}
+    return info.get("shortName") or info.get("longName")
+
+
+_NAME_SUFFIX = re.compile(r"[,.]|\b(inc|corp|corporation|co|ltd|plc|holdings|group|class [a-z])\b", re.IGNORECASE)
+
+
+def _company_words(store: Store, code: str, name_of: Callable[[str], str | None]) -> list[str] | None:
+    """Ticker plus the company's short name, cached. None when the name is unknown (then nothing is filtered)."""
+    key = f"company_name:{code}"
+    name = store.kv_get(key)
+    if not name:
+        try:
+            name = name_of(code)
+        except Exception as exc:
+            log.info("company name lookup failed for %s: %s", code, exc)
+            return None
+        if not name:
+            return None
+        store.kv_set(key, name)
+    words = [code.split(".", 1)[-1]]
+    short = " ".join(_NAME_SUFFIX.sub(" ", name).split())
+    if short:
+        words += [short, short.split()[0]]
+    return words
+
+
+def _mentions(title: str, words: list[str]) -> bool:
+    # Prefix match: "Space Exploration Technologies" is "SpaceX" in headlines.
+    return any(re.search(r"\b" + re.escape(w), title, re.IGNORECASE) for w in words)
+
+
+def about_company(store: Store, code: str, title: str,
+                  name_of: Callable[[str], str | None] = yf_company_name) -> bool:
+    """Yahoo's feed for a ticker mixes in other companies' stories; keep the ones naming this company."""
+    words = _company_words(store, code, name_of)
+    return words is None or _mentions(title, words)
+
+
+def poll_news(store: Store, codes: list[str], fetch: FetchFn = yf_news,
+              name_of: Callable[[str], str | None] = yf_company_name) -> list[tuple[str, NewsItem]]:
     hits: list[tuple[str, NewsItem]] = []
     for code in codes:
         try:
@@ -79,7 +120,9 @@ def poll_news(store: Store, codes: list[str], fetch: FetchFn = yf_news) -> list[
             if store.seen_news(key):
                 continue
             store.mark_news(key)
-            if not first_poll and is_major(item["title"]):
+            if first_poll or not is_major(item["title"]):
+                continue
+            if about_company(store, code, item["title"], name_of):
                 hits.append((code, item))
         if first_poll:
             store.kv_set(f"news_init:{code}", "1")

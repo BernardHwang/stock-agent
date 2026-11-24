@@ -31,7 +31,7 @@ from .messages import (
 )
 from .models import Alert, PlanState
 from .moomoo_gw import MoomooGateway
-from .news import is_major, poll_news, yf_news
+from .news import about_company, is_major, poll_news, yf_news
 from .outcomes import update_outcomes
 from .pricefeed import PriceFeed, make_feed, yf_day_moves, yf_index_moves, yf_last_prices
 from .rules import RuleEngine
@@ -42,6 +42,7 @@ log = logging.getLogger(__name__)
 
 PRIORITY_URGENT = 0
 PRIORITY_REVIEW = 2
+MAX_NEWS_ALERTS_PER_DAY = 3
 LEVEL_KINDS = {"entry", "partial_tp", "tp", "sl", "expired"}
 
 
@@ -252,6 +253,11 @@ class App:
             return
         hits = await asyncio.to_thread(poll_news, self.store, held)
         for code, item in hits:
+            day_key = f"news_alerts:{code}:{self.now().date().isoformat()}"
+            sent = int(self.store.kv_get(day_key) or 0)
+            if sent >= MAX_NEWS_ALERTS_PER_DAY:  # a big story produces dozens of headlines
+                continue
+            self.store.kv_set(day_key, str(sent + 1))
             queued = self._enqueue_once_per_day(code, "news", f"news_review:{code}")
             await self.notify(format_news_alert(code, item["title"], item.get("link"), self.now(), self.settings.tz,
                                                 review_queued=queued))
@@ -306,7 +312,7 @@ class App:
             except Exception:
                 news_items = []
             headlines = [i["title"] for i in news_items[:3]]
-            has_major_news = any(is_major(t) for t in headlines)
+            has_major_news = any(is_major(t) and about_company(self.store, pos.code, t) for t in headlines)
             big_move = day_move is not None and abs(day_move) >= self.settings.daily_move_pct
             if (big_move or has_major_news) and self._enqueue_once_per_day(
                 pos.code, "daily_move", f"daily_review:{pos.code}"

@@ -237,3 +237,11 @@ async def test_opend_single_blip_is_silent(app):
     app.gateway.reason = None
     await app.opend_health()
     assert app.sent == []
+
+
+async def test_news_alerts_capped_per_stock_per_day(app, monkeypatch):
+    held_plan(app.store)
+    hits = [("US.NVDA", {"id": str(i), "title": f"Nvidia CEO news {i}", "link": ""}) for i in range(5)]
+    monkeypatch.setattr("stockagent.app.poll_news", lambda store, codes: hits)
+    await app.news_poll()
+    assert len(app.sent) == 3
