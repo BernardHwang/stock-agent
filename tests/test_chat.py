@@ -93,7 +93,14 @@ async def test_round_limit(store):
     eng, _ = engine(store, [tool_call("get_market_overview", i=i) for i in range(7)])
     reply = await eng.reply("loop")
     assert reply.text == chat.ROUND_LIMIT_TEXT
-    assert store.chat_calls_on(NOW.date()) == 6
+    assert store.chat_calls_on(NOW.date()) == 7  # 6 tool rounds + one request to answer from what it has
+
+
+async def test_round_limit_answers_from_gathered_data(store):
+    eng, llm = engine(store, [tool_call("get_market_overview", i=i) for i in range(6)] + [AIMessage("summary")])
+    reply = await eng.reply("loop")
+    assert reply.text == "summary"
+    assert isinstance(llm.calls[-1][-1], HumanMessage)
 
 
 async def test_cap_reached(store):

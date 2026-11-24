@@ -22,6 +22,7 @@ log = logging.getLogger(__name__)
 TURN_TIMEOUT_S: float = 90
 MAX_ROUNDS = 6
 
+FINAL_ANSWER_PROMPT = "Stop looking things up. Answer my question now using only the data above."
 ROUND_LIMIT_TEXT = "I couldn't finish looking that up. Try asking more narrowly."
 CAP_TEXT = "Daily chat limit reached (CHAT_MAX_PER_DAY). It resets tomorrow."
 WARN_TEXT = "(Heads-up: 90% of today's chat limit is used.)"
@@ -243,7 +244,10 @@ class ChatEngine:
             for call in ai.tool_calls:
                 result = await self._dispatch(call["name"], call.get("args") or {})
                 messages.append(ToolMessage(result, tool_call_id=call["id"]))
-        return ROUND_LIMIT_TEXT
+        # Smaller models keep calling tools; one last turn asks for an answer from what was gathered.
+        self._spend()
+        ai = await llm.ainvoke(messages + [HumanMessage(FINAL_ANSWER_PROMPT)])
+        return (_text(ai.content) or ROUND_LIMIT_TEXT) if not ai.tool_calls else ROUND_LIMIT_TEXT
 
     async def reply(self, text: str, quoted: str | None = None) -> ChatReply:
         async with self._lock:
