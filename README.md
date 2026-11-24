@@ -20,15 +20,21 @@ plus POSTs to the market-data (`/api/v1.0/quote/`) endpoints. `test/safety.test.
 
 | Command | What it does |
 |---|---|
-| `/help` | List commands |
+All of these are in Telegram's "/" menu; `/help` also lists what runs automatically.
+
+| Command | What it does |
+|---|---|
+| `/help` | All commands and what runs automatically |
 | `/status` | moomoo link, last sync, active plans, market state |
 | `/holdings` | Positions from the last sync |
-| `/moomoo` | Connect moomoo read-only, or show the link state |
-| `/moomoo sync` | Sync positions now |
-| `/moomoo reconnect` | Sign in again before the sign-in expires (default 14 days) |
-| `/moomoo off` | Disconnect and delete the stored access |
-| `/moomoo probe [post] <path> [json]` | Setup aid: show a raw `/api/v1.0/quote/` or `/api/v1.0/accounts/` answer, with ids masked |
+| `/sync` | Sync positions from moomoo now |
+| `/moomoo` | Connect moomoo read-only, or show the link and when its sign-in expires |
+| `/reconnect` | Sign in again before the sign-in expires (default 14 days) |
+| `/disconnect` | Disconnect and delete the stored access |
+| `/probe [post] <path> [json]` | Setup aid: show a raw `/api/v1.0/quote/` or `/api/v1.0/accounts/` answer, with ids masked |
 | `/aitest [model]` | Measure one Workers AI call: tokens and estimated neurons (free: 10,000/day) |
+
+The older forms `/moomoo sync`, `/moomoo reconnect`, `/moomoo off` and `/moomoo probe` still work.
 
 ## What runs when
 
@@ -93,11 +99,11 @@ sign-in.
 In Telegram:
 - `/help` answers.
 - `/moomoo` connects. On moomoo’s page allow **positions and quotes only**, and leave trading **off**.
-- `/moomoo sync` lists your positions.
-- `/moomoo probe post /api/v1.0/quote/snapshot {"code_list":["US.MDB"]}`: run it at about 13:00, 18:00 and 06:00
+- `/sync` lists your positions.
+- `/probe post /api/v1.0/quote/snapshot {"code_list":["US.MDB"]}`: run it at about 13:00, 18:00 and 06:00
   Malaysia time, and note whether `overnight_price`, `pre_price` and `after_price` are filled. If they stay 0, set
   `PRICE_HOURS` to `"regular"` in `wrangler.jsonc` and push.
-- `/moomoo probe /api/v1.0/quote/trading-days?market=US&begin=<today>&end=<+30d>` shows trading dates. If moomoo wants
+- `/probe /api/v1.0/quote/trading-days?market=US&start=<today>&end=<+30d>` shows trading dates. If moomoo wants
   other parameter names, adjust `tradingDays()` in `src/moomoo/api.ts`.
 - `/aitest` reports the neuron cost of one 70B call. This sizes the coming analysis pipeline.
 

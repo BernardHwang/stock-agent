@@ -9,7 +9,7 @@ import type { Store } from "./store";
 import { send, telegramApi, webhookSecret } from "./telegram";
 
 /** Bump to make every deployed Worker redo its setup (e.g. after changing the command list or webhook options). */
-const SETUP_VERSION = 1;
+const SETUP_VERSION = 2; // 2: full command menu
 
 const hour = (now: Date) => now.toISOString().slice(0, 13);
 

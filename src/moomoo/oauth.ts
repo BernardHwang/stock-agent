@@ -149,7 +149,7 @@ export async function handleCallback(req: Request, env: Env, store: Store, now: 
   await saveRefresh(env, store, body, now);
   await store.setSetting("moomoo_scope", scope);
   await saveAccess(store, body, now);
-  await send(env, "moomoo connected, read-only. Send /moomoo sync to sync your positions now.");
+  await send(env, "moomoo connected, read-only. Send /sync to sync your positions now.");
   return page("Connected", "moomoo is connected, read-only. You can close this page and go back to Telegram.");
 }
 

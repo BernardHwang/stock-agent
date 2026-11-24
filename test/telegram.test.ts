@@ -28,6 +28,54 @@ describe("webhook", () => {
   });
 });
 
+describe("command center", () => {
+  const send = async (text: string, store = new Store(env.DB)) => {
+    const calls = mockFetch(telegramOk);
+    await handleUpdate(env, store, update(text), NOW, "https://worker.test");
+    return sentTexts(calls);
+  };
+
+  it("offers every feature as its own menu command", () => {
+    expect(COMMANDS.map(([n]) => n)).toEqual(
+      ["help", "status", "holdings", "sync", "moomoo", "reconnect", "disconnect", "probe", "aitest"]);
+    for (const [name, description] of COMMANDS) {
+      expect(name).toMatch(/^[a-z0-9_]{1,32}$/); // Telegram's rule for menu commands
+      expect(description.length).toBeGreaterThanOrEqual(3);
+      expect(description.length).toBeLessThanOrEqual(256);
+    }
+  });
+
+  it("/help explains usage and what runs automatically", async () => {
+    const [text] = await send("/help");
+    expect(text).toContain("/probe [post] <path> [json]");
+    expect(text).toContain("/aitest [model]");
+    expect(text).toContain("Stop-loss warning");
+  });
+
+  it("/sync works like /moomoo sync", async () => {
+    expect(await send("/sync")).toEqual(["moomoo isn't connected. Send /moomoo to connect."]);
+  });
+
+  it("/disconnect removes the stored access", async () => {
+    const store = new Store(env.DB);
+    await store.setSetting("moomoo_refresh", "r");
+    await send("/disconnect", store);
+    expect(await store.getSetting("moomoo_refresh")).toBeNull();
+  });
+
+  it("/reconnect offers a fresh sign-in link", async () => {
+    const store = new Store(env.DB);
+    await store.setSetting("moomoo_refresh", "r");
+    const [text] = await send("/reconnect", store);
+    expect(text).toContain("Sign in again");
+  });
+
+  it("/probe without a path explains its usage", async () => {
+    const [text] = await send("/probe");
+    expect(text).toContain("/api/v1.0/quote/");
+  });
+});
+
 describe("commands", () => {
   it("lists every command in /help", async () => {
     const calls = mockFetch(telegramOk);

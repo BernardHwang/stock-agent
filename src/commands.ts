@@ -7,14 +7,43 @@ import type { Store } from "./store";
 import { send, type Update } from "./telegram";
 import { inPriceWindow, inUsSession } from "./time";
 
-/** The single source for /help and Telegram's "/" menu. */
+/** Telegram's "/" menu, in order. Menu entries can't take arguments, so every feature is its own command. */
 export const COMMANDS: [name: string, description: string][] = [
-  ["help", "What I can do"],
-  ["status", "moomoo link, last sync and market state"],
-  ["holdings", "Your moomoo positions"],
-  ["moomoo", "Connect moomoo read-only (also: sync, reconnect, off)"],
-  ["aitest", "Measure one AI call's neuron cost (setup)"],
+  ["help", "All commands and what runs automatically"],
+  ["status", "moomoo link, last sync, plans and market state"],
+  ["holdings", "Your positions from the last sync"],
+  ["sync", "Sync positions from moomoo now"],
+  ["moomoo", "Connect moomoo (read-only) or show the link"],
+  ["reconnect", "Sign in to moomoo again before it expires"],
+  ["disconnect", "Disconnect moomoo and delete its access"],
+  ["probe", "Show a raw moomoo answer (setup aid)"],
+  ["aitest", "Measure one AI call's neuron cost"],
 ];
+
+const HELP = [
+  "Portfolio",
+  "/holdings - your positions from the last sync",
+  "/sync - sync positions from moomoo now",
+  "/status - moomoo link, last sync, active plans, US market state",
+  "",
+  "moomoo (read-only: positions and quotes, never trading)",
+  "/moomoo - connect, or show the link and when its sign-in expires",
+  "/reconnect - sign in again before the sign-in runs out (every ~14 days)",
+  "/disconnect - disconnect and delete the stored access",
+  "",
+  "Setup aids",
+  "/probe [post] <path> [json] - raw answer from a /api/v1.0/quote/ or /api/v1.0/accounts/ path, ids masked",
+  "/aitest [model] - tokens and neurons of one AI call (free: 10,000 neurons a day)",
+  "",
+  "Automatic",
+  "Stop-loss warning - every minute on US trading days (24h incl. pre-market, after-hours and overnight), once per plan",
+  "Holdings sync - every 15 min in US market hours, and 07:55 Malaysia time",
+  "moomoo problems - one note after 3 failed minutes, one when it recovers",
+  "",
+  "/help - this guide (the \"/\" menu lists every command)",
+  "",
+  "Coming next: analysis (plans with buy zone, target and stop), chat, daily briefs.",
+].join("\n");
 
 const UNKNOWN = "Unknown command. Send /help.";
 const NOT_A_COMMAND = "I only understand commands for now; chat is coming. Send /help to see them.";
@@ -40,13 +69,19 @@ export async function handleUpdate(env: Env, store: Store, update: unknown, now:
   switch (name) {
     case "start":
     case "help":
-      return send(env, ["Commands:", ...COMMANDS.map(([n, d]) => `/${n} - ${d}`)].join("\n"));
+      return send(env, HELP);
     case "status":
       return send(env, await statusText(env, store, now));
     case "holdings":
       return send(env, await holdingsText(store));
     case "moomoo":
       return moomooCommand(env, store, args, now, origin);
+    case "sync":
+    case "reconnect":
+    case "probe":
+      return moomooCommand(env, store, [name, ...args], now, origin);
+    case "disconnect":
+      return moomooCommand(env, store, ["off"], now, origin);
     case "aitest":
       return aiTest(env, args[0] ?? DEFAULT_MODEL);
     default:
@@ -86,18 +121,18 @@ async function syncCommand(env: Env, store: Store, now: Date): Promise<void> {
     const summary = `Synced ${result.count} position${result.count === 1 ? "" : "s"} from moomoo.`;
     return send(env, [...result.messages, summary].join("\n\n"));
   } catch {
-    return send(env, "moomoo didn't respond, so nothing was synced. Try /moomoo sync again in a moment.");
+    return send(env, "moomoo didn't respond, so nothing was synced. Try /sync again in a moment.");
   }
 }
 
-const PROBE_PREFIXES =["/api/v1.0/quote/", "/api/v1.0/accounts/"];
+const PROBE_PREFIXES = ["/api/v1.0/quote/", "/api/v1.0/accounts/"];
 
-/** Setup aid: show the raw shape of a read-only moomoo endpoint. `/moomoo probe [post] <path> [json]`. */
+/** Setup aid: show the raw shape of a read-only moomoo endpoint. `/probe [post] <path> [json]`. */
 async function probe(env: Env, store: Store, args: string[], now: Date): Promise<void> {
   const post = args[0]?.toLowerCase() === "post";
   const path = (post ? args[1] : args[0]) ?? "";
   if (!PROBE_PREFIXES.some((p) => path.startsWith(p))) {
-    return send(env, "Probe reads only /api/v1.0/quote/ and /api/v1.0/accounts/ paths.");
+    return send(env, "Usage: /probe [post] <path> [json]. Probe reads only /api/v1.0/quote/ and /api/v1.0/accounts/ paths.");
   }
   const token = await accessToken(env, store, now);
   if (!token) return send(env, "moomoo isn't connected. Send /moomoo first.");
@@ -128,7 +163,7 @@ async function moomooCommand(env: Env, store: Store, args: string[], now: Date, 
   if (connected && sub !== "reconnect") {
     const until = await store.getSetting("moomoo_until");
     return send(env, `moomoo is connected, read-only.${until ? ` The sign-in lasts until ${until}.` : ""}\n\n` +
-      "/moomoo reconnect to sign in again before it expires\n/moomoo off to disconnect");
+      "/reconnect to sign in again before it expires\n/disconnect to disconnect");
   }
   const url = await connectUrl(env, store, origin, now);
   return send(env, (connected ? "Sign in again to keep moomoo connected. The current link stays until the new one " +

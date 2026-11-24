@@ -41,7 +41,9 @@ describe("ensureSetup", () => {
     expect(body.url).toBe(`${URL_}/telegram`);
     expect(body.secret_token).toMatch(/^[0-9a-f]{64}$/);
     expect(body.secret_token).toBe(await store.getSetting("telegram_webhook_secret"));
-    expect(named(calls, "setMyCommands")).toHaveLength(1);
+    const [menu] = named(calls, "setMyCommands");
+    const { COMMANDS } = await import("../src/commands");
+    expect(JSON.parse(menu!.body).commands.map((c: { command: string }) => c.command)).toEqual(COMMANDS.map(([n]) => n));
     await ensureSetup(fresh(), store, plusMin(1));
     expect(named(calls, "setWebhook")).toHaveLength(1);
   });
