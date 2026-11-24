@@ -25,9 +25,18 @@
 	"ai": {
 		"binding": "AI"
 	},
+	// One analysis per instance; started from the minute cron by drainQueue (src/workflow.ts).
+	"workflows": [
+		{ "name": "stock-agent-analysis", "binding": "ANALYSIS", "class_name": "AnalysisWorkflow" }
+	],
 	"vars": {
 		"OWNER_TZ": "Asia/Kuala_Lumpur",
 		"PRICE_HOURS": "24h",
+		// Analysis and chat. QUICK runs the analysts and debaters; DEEP the manager, trader, portfolio manager and chat.
+		"QUICK_MODEL": "@cf/meta/llama-4-scout-17b-16e-instruct",
+		"DEEP_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+		"MAX_RUNS_PER_DAY": "3",
+		"CHAT_MAX_PER_DAY": "30",
 		// Your Worker address, e.g. https://stock-agent.<you>.workers.dev. Once set, the Worker registers its own
 		// Telegram webhook and moomoo client after each deploy.
 		"PUBLIC_URL": "https://stock-agent.laohwang0523.workers.dev"

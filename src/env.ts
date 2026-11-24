@@ -1,6 +1,8 @@
 export interface Env {
   DB: D1Database;
   AI: Ai;
+  /** The analysis Workflow (src/workflow.ts). */
+  ANALYSIS: Workflow;
   TELEGRAM_BOT_TOKEN: string;
   /** Optional: generated and kept in D1 when not set. */
   TELEGRAM_WEBHOOK_SECRET?: string;

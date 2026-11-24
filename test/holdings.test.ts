@@ -61,7 +61,7 @@ describe("syncHoldings", () => {
   it("announces an untracked holding once", async () => {
     const store = new Store(env.DB);
     const messages = await syncHoldings(store, [pos("US.AMD")], NOW);
-    expect(messages).toEqual(["Now tracking your position in US.AMD."]);
+    expect(messages).toEqual(["Now tracking your position in US.AMD. I've queued an analysis to set its target and stop-loss."]);
     expect(await syncHoldings(store, [pos("US.AMD")], NOW)).toEqual([]);
   });
 
@@ -96,7 +96,7 @@ describe("/moomoo sync", () => {
         : url.includes("/7/positions") ? raw('{"s":"ok","d":[{"code":"US.MDB","stock_name":"MongoDB","qty":7,"cost_price":358.09}]}')
         : undefined));
     await handleUpdate(env, store, { message: { chat: { id: 1001 }, text: "/moomoo sync" } }, NOW, "https://worker.test");
-    expect(sentTexts(calls)).toEqual(["Now tracking your position in US.MDB.\n\nSynced 1 position from moomoo."]);
+    expect(sentTexts(calls)).toEqual(["Now tracking your position in US.MDB. I've queued an analysis to set its target and stop-loss.\n\nSynced 1 position from moomoo."]);
     expect(await store.lastPositions()).toEqual([{ code: "US.MDB", name: "MongoDB", qty: 7, avgCost: 358.09 }]);
     expect(await store.getSetting("last_sync")).toBe(NOW.toISOString());
     vi.restoreAllMocks();

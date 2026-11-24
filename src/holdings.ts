@@ -5,6 +5,7 @@ import { accessToken } from "./moomoo/oauth";
 import type { Plan } from "./plans";
 import type { Position, Store } from "./store";
 
+const NEW_HOLDING_PRIORITY = 1; // ahead of weekly reviews, behind what you ask for in chat
 const EMPTY_READ_KEY = "positions_empty_read";
 const COST_MATCH_TOLERANCE = 0.15; // a position bought further from the plan's buy zone wasn't bought on that plan
 
@@ -46,8 +47,9 @@ export async function syncHoldings(store: Store, current: Position[], now: Date)
     if (plan.state !== "TRIGGERED" && position && boughtElsewhere(plan, position.avgCost)) {
       await store.updatePlan({ ...plan, state: "CLOSED" });
       retired.add(plan.code);
+      await store.enqueue(plan.code, "new_holding", NEW_HOLDING_PRIORITY, now);
       messages.push(`Your ${plan.code} cost (${position.avgCost!.toFixed(2)}) is far from plan #${plan.id}'s buy zone, ` +
-        "so I've retired that plan.");
+        "so I've retired that plan and queued a fresh analysis.");
     }
   }
 
@@ -59,7 +61,8 @@ export async function syncHoldings(store: Store, current: Position[], now: Date)
       messages.push(`I see you picked up ${code} in moomoo. I've linked it to plan #${plan.id} and I'm watching its ` +
         "stop-loss.");
     } else if (!plan && !retired.has(code)) {
-      messages.push(`Now tracking your position in ${code}.`);
+      await store.enqueue(code, "new_holding", NEW_HOLDING_PRIORITY, now);
+      messages.push(`Now tracking your position in ${code}. I've queued an analysis to set its target and stop-loss.`);
     }
   }
 

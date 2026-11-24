@@ -159,6 +159,11 @@ export class Store {
     await this.db.prepare("UPDATE queue SET status = ? WHERE id = ?").bind(status, id).run();
   }
 
+  async runningItems(): Promise<QueueItem[]> {
+    const { results } = await this.db.prepare("SELECT * FROM queue WHERE status = 'running' ORDER BY id").all<QueueRow>();
+    return results.map(toQueueItem);
+  }
+
   async isRunning(): Promise<boolean> {
     return Boolean(await this.db.prepare("SELECT 1 FROM queue WHERE status = 'running' LIMIT 1").first());
   }
