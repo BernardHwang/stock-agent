@@ -30,6 +30,62 @@ export async function quotePost(token: string, path: string, body: object): Prom
   return parse(res, path);
 }
 
+export type Session = "overnight" | "pre" | "regular" | "after";
+export interface Quote {
+  price: number;
+  session: Session;
+}
+
+/** The row list in a response: either the data itself or the first array inside it (shape confirmed by the spike). */
+function rowsOf(d: unknown): Record<string, unknown>[] {
+  if (Array.isArray(d)) return d as Record<string, unknown>[];
+  if (d && typeof d === "object") {
+    const list = Object.values(d).find(Array.isArray);
+    if (list) return list as Record<string, unknown>[];
+  }
+  return [];
+}
+
+const positive = (v: unknown) => (typeof v === "number" && v > 0 ? v : Number(v) > 0 ? Number(v) : null);
+
+/**
+ * Current price per code from one snapshot call. moomoo fills overnight_price, pre_price or after_price only while
+ * that session runs (0 otherwise), so the first non-zero one is the live session; else last_price (regular).
+ * Codes without any positive price are left out.
+ */
+export async function quotes(token: string, codes: string[]): Promise<Map<string, Quote>> {
+  const out = new Map<string, Quote>();
+  if (!codes.length) return out;
+  const rows = rowsOf(await quotePost(token, "/api/v1.0/quote/snapshot", { code_list: codes }));
+  for (const row of rows) {
+    const code = typeof row.code === "string" ? row.code : null;
+    if (!code) continue;
+    const sessions: [Session, unknown][] = [
+      ["overnight", row.overnight_price], ["pre", row.pre_price], ["after", row.after_price], ["regular", row.last_price],
+    ];
+    for (const [session, value] of sessions) {
+      const price = positive(value);
+      if (price !== null) {
+        out.set(code, { price, session });
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+/** New York trading dates (YYYY-MM-DD) between ``from`` and ``to``. */
+export async function tradingDays(token: string, from: string, to: string): Promise<Set<string>> {
+  const query = new URLSearchParams({ market: "US", begin: from, end: to });
+  const rows = rowsOf(await apiGet(token, `/api/v1.0/quote/trading-days?${query}`));
+  const days = new Set<string>();
+  for (const row of rows) {
+    const date = String(row.time ?? row.date ?? "").slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(date)) days.add(date);
+  }
+  return days;
+}
+
 interface PositionRow {
   code?: string;
   stock_name?: string;

@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { handleUpdate } from "../src/commands";
-import { apiGet, positions, quotePost } from "../src/moomoo/api";
+import { apiGet, positions, quotePost, quotes, tradingDays } from "../src/moomoo/api";
 import { Store } from "../src/store";
 import { mockFetch, sentTexts, telegramOk } from "./helpers";
 
@@ -78,5 +78,47 @@ describe("/moomoo probe", () => {
     expect(texts[1]).toContain("…4567");
     expect(texts[1]).not.toContain("12345678901234567");
     expect(calls.filter((c) => c.url.includes("webapi.moomoo.com"))).toHaveLength(1);
+  });
+});
+
+describe("quotes", () => {
+  const fixture = async (name: string) => JSON.stringify((await import(`./fixtures/${name}.json`)).default);
+
+  it("takes the overnight price when that session is active and skips codes with no price", async () => {
+    const body = await fixture("snapshot-overnight");
+    const calls = mockFetch(() => raw(body));
+    const out = await quotes("tok", ["US.MDB", "US.NVDA"]);
+    expect(out.get("US.MDB")).toEqual({ price: 312.5, session: "overnight" });
+    expect(out.has("US.NVDA")).toBe(false);
+    expect(calls).toHaveLength(1);
+    expect(JSON.parse(calls[0]!.body)).toEqual({ code_list: ["US.MDB", "US.NVDA"] });
+  });
+
+  it("reads pre-market prices, also from a wrapped list", async () => {
+    const body = await fixture("snapshot-pre");
+    mockFetch(() => raw(body));
+    expect((await quotes("tok", ["US.MDB"])).get("US.MDB")).toEqual({ price: 318.2, session: "pre" });
+  });
+
+  it("falls back to the last price in the regular session", async () => {
+    const body = await fixture("snapshot-regular");
+    mockFetch(() => raw(body));
+    expect((await quotes("tok", ["US.MDB"])).get("US.MDB")).toEqual({ price: 317.4, session: "regular" });
+  });
+
+  it("makes no call for an empty list", async () => {
+    const calls = mockFetch(() => raw("{}"));
+    expect((await quotes("tok", [])).size).toBe(0);
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("tradingDays", () => {
+  it("collects the trading dates", async () => {
+    const body = JSON.stringify((await import("./fixtures/trading-days.json")).default);
+    const calls = mockFetch(() => raw(body));
+    const days = await tradingDays("tok", "2026-11-24", "2026-11-30");
+    expect([...days]).toEqual(["2026-11-24", "2026-11-25", "2026-11-27"]);
+    expect(calls[0]!.url).toContain("/api/v1.0/quote/trading-days");
   });
 });
