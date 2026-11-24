@@ -174,3 +174,24 @@ async def test_get_full_report_tool(store):
     save_report(store, "US.NVDA", "## Final decision\nStrong buy on AI demand.", NOW, price=120.0)
     saved = await call(tb, "get_full_report", ticker="NVDA")
     assert "Strong buy on AI demand." in saved["report"] and saved["price_at_analysis"] == 120.0
+
+
+async def test_queue_says_when_the_daily_limit_is_used_up(store):
+    for _ in range(6):  # default MAX_RUNS_PER_DAY
+        store.record_run("US.NVDA", NOW)
+    out = await call(toolbox(store, Fakes()), "queue_deep_analysis", ticker="MDB")
+    assert out["runs_left_today"] == 0 and "tomorrow" in out["note"]
+
+
+async def test_queue_says_when_paused_after_a_rate_limit(store):
+    from datetime import timedelta
+
+    from stockagent.analysis import BACKOFF_KEY
+    store.kv_set(BACKOFF_KEY, (NOW + timedelta(minutes=20)).isoformat())
+    out = await call(toolbox(store, Fakes()), "queue_deep_analysis", ticker="MDB")
+    assert out["runs_left_today"] == 6 and "paused" in out["note"]
+
+
+async def test_queue_has_no_note_normally(store):
+    out = await call(toolbox(store, Fakes()), "queue_deep_analysis", ticker="MDB")
+    assert out["runs_left_today"] == 6 and "note" not in out

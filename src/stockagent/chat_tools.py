@@ -6,11 +6,12 @@ import json
 import logging
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
-from .analysis import load_report, report_section
-from .config import Settings
+from .analysis import BACKOFF_KEY, load_report, report_section
+from .config import Settings, local_date
 from .deep_rule import deep_reason
 from .news import NewsItem, is_major
 from .store import Store
@@ -230,7 +231,18 @@ class ChatToolbox:
     async def queue_deep_analysis(self, ticker: str) -> dict:
         code = self._code(ticker)
         position = await self.deps.queue_deep(code)
-        return {"queued": code, "queue_position": position, "already_running": position == 0}
+        now, tz = self.now(), self.settings.tz
+        left = max(0, self.settings.max_runs_per_day - self.store.count_runs_on(local_date(now, tz), tz))
+        out: dict[str, Any] = {"queued": code, "queue_position": position, "already_running": position == 0,
+                               "runs_left_today": left}
+        paused_until = self.store.kv_get(BACKOFF_KEY)
+        if left == 0:
+            out["note"] = "Today's deep-analysis limit (MAX_RUNS_PER_DAY) is used up; it will run tomorrow."
+        elif paused_until and now < datetime.fromisoformat(paused_until):
+            until = datetime.fromisoformat(paused_until).replace(tzinfo=UTC).astimezone(ZoneInfo(tz))
+            out["note"] = (f"The AI provider refused requests recently; analyses are paused until "
+                           f"{until:%H:%M}, then this one runs.")
+        return out
 
     @_tool
     async def offer_deep_analysis(self, ticker: str) -> dict:
