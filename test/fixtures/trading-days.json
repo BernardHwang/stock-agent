@@ -1,1 +1,1 @@
-{"s":"ok","d":[{"time":"2026-11-24","trade_date_type":"WHOLE"},{"time":"2026-11-25","trade_date_type":"WHOLE"},{"time":"2026-11-27","trade_date_type":"MORNING"}]}
+{"ret_code":0,"ret_msg":"success","data":{"trading_days":[{"time":"2026-11-24","trade_date_type":"WHOLE","trade_second":23400},{"time":"2026-11-25","trade_date_type":"WHOLE","trade_second":23400},{"time":"2026-11-27","trade_date_type":"MORNING","trade_second":12600}]}}

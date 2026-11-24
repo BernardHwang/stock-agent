@@ -64,7 +64,7 @@ async function failed(env: Env, store: Store): Promise<void> {
   await store.setSetting("moomoo_failures", String(count));
   if (count === FAILURES_BEFORE_NOTE) {
     await store.setSetting("moomoo_down", "1");
-    await send(env, "moomoo is unreachable; stop-loss checks are paused.");
+    await send(env, "moomoo isn't answering as expected; stop-loss checks are paused.");
   }
 }
 

@@ -106,7 +106,7 @@ describe("runMinute", () => {
     status = 200;
     await runMinute(env, store, plusMin(TUE_OPEN, 6));
     await runMinute(env, store, plusMin(TUE_OPEN, 7));
-    expect(sentTexts(calls)).toEqual(["moomoo is unreachable; stop-loss checks are paused.", "moomoo is reachable again."]);
+    expect(sentTexts(calls)).toEqual(["moomoo isn't answering as expected; stop-loss checks are paused.", "moomoo is reachable again."]);
   });
 
   it("syncs holdings every 15 minutes in the regular session", async () => {
@@ -132,7 +132,7 @@ describe("runMinute robustness", () => {
     const calls = mockFetch((url) => telegramOk(url) ??
       (url.includes("/quote/trading-days") ? Response.json({ s: "ok", d: { unexpected: "shape" } }) : undefined));
     for (let i = 0; i < 3; i++) await runMinute(env, store, plusMin(TUE_OPEN, i));
-    expect(sentTexts(calls)).toEqual(["moomoo is unreachable; stop-loss checks are paused."]);
+    expect(sentTexts(calls)).toEqual(["moomoo isn't answering as expected; stop-loss checks are paused."]);
     expect(await store.getSetting("trading_days_on")).toBeNull();
   });
 
@@ -151,7 +151,7 @@ describe("runMinute robustness", () => {
       (url.endsWith("/quote/snapshot") ? new Response("down", { status: 503 }) : undefined));
     for (let i = 0; i < 3; i++) await runMinute(env, store, at(`2026-11-25T15:0${i}:00Z`)); // Wed, in session
     await runMinute(env, store, at("2026-11-26T01:30:00Z")); // Wed 20:30 EST, before Thanksgiving: idle
-    expect(sentTexts(calls)).toEqual(["moomoo is unreachable; stop-loss checks are paused."]);
+    expect(sentTexts(calls)).toEqual(["moomoo isn't answering as expected; stop-loss checks are paused."]);
   });
 
   it("retries a stop-loss warning that Telegram did not accept", async () => {

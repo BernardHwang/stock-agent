@@ -38,7 +38,7 @@ The cron fires every minute.
 - **Holdings sync:** every 15 minutes in the US regular session, plus 07:55 Malaysia time.
 - **Stop-loss check:** every minute inside the price window. The price comes from the field of the session the
   New York clock is in.
-- **Failures:** after 3 failed minutes you get one "moomoo is unreachable" note, and one "reachable again" note
+- **Failures:** after 3 failed minutes you get one "moomoo isn't answering as expected" note, and one "reachable again" note
   when it recovers.
 
 ## Develop

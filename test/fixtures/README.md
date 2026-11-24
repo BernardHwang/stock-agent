@@ -1,5 +1,6 @@
-Fixtures for moomoo API parsing.
+Fixtures for moomoo API parsing, trimmed from live answers on 2026-11-24 (no account data).
 
-`snapshot-*.json` and `trading-days.json` are built from the field names in moomoo's docs
-(open.moomoo.com/api/quote/realtime/market-snapshot, /api/quote/basic-data trading days), not from live responses.
-The live spike (plan Task 9) replaces them with real, masked samples.
+- Market data (`/api/v1.0/quote/...`) answers `{"ret_code":0,"ret_msg":"success","data":{...}}`;
+  an error is a non-zero `ret_code` (e.g. -3 "missing required parameter: start") with HTTP 200.
+- Accounts and positions (`/api/v1.0/accounts/...`) answer `{"s":"ok","d":...}`.
+- Trading days take `market`, `start`, `end`.

@@ -17,6 +17,16 @@ describe("apiGet", () => {
     expect(d.accounts[0]!.account_id).toBe("12345678901234567");
   });
 
+  it("reads market-data answers, which use ret_code and data", async () => {
+    mockFetch(() => raw('{"ret_code":0,"ret_msg":"success","data":{"x":1}}'));
+    expect(await apiGet("tok", "/api/v1.0/quote/x")).toEqual({ x: 1 });
+  });
+
+  it("throws on a market-data error code, with moomoo's reason", async () => {
+    mockFetch(() => raw('{"ret_code":-3,"ret_msg":"missing required parameter: start"}'));
+    await expect(apiGet("tok", "/api/v1.0/quote/x")).rejects.toThrow("missing required parameter: start");
+  });
+
   it("throws when moomoo answers an error", async () => {
     mockFetch(() => raw('{"s":"error","msg":"nope"}'));
     await expect(apiGet("tok", "/api/v1.0/x")).rejects.toThrow("answered error");
@@ -134,6 +144,6 @@ describe("tradingDays", () => {
     const calls = mockFetch(() => raw(body));
     const days = await tradingDays("tok", "2026-11-24", "2026-11-30");
     expect([...days]).toEqual(["2026-11-24", "2026-11-25", "2026-11-27"]);
-    expect(calls[0]!.url).toContain("/api/v1.0/quote/trading-days");
+    expect(calls[0]!.url).toContain("/api/v1.0/quote/trading-days?market=US&start=2026-11-24&end=2026-11-30");
   });
 });

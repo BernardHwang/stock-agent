@@ -10,7 +10,12 @@ async function parse(res: Response, path: string): Promise<unknown> {
   if (!res.ok) throw new Error(`moomoo ${name} failed: ${res.status}`);
   // Account numbers have more digits than a JavaScript number holds exactly, so long integers are kept as text.
   const body = JSON.parse((await res.text()).replace(/([:[,]\s*)(\d{16,})(?=\s*[,}\]])/g, '$1"$2"')) as
-    { s?: string; d?: unknown };
+    { s?: string; d?: unknown; ret_code?: number; ret_msg?: string; data?: unknown };
+  // Market-data endpoints answer {ret_code, ret_msg, data} (errors too, with HTTP 200); account ones {s, d}.
+  if (body.ret_code !== undefined) {
+    if (body.ret_code !== 0) throw new Error(`moomoo ${name} answered ${body.ret_code}: ${body.ret_msg ?? ""}`);
+    return body.data;
+  }
   if (body.s !== undefined && body.s !== "ok") throw new Error(`moomoo ${name} answered ${body.s}`);
   return body.d;
 }
@@ -74,7 +79,7 @@ export async function quotes(token: string, codes: string[], now: Date): Promise
 
 /** New York trading dates (YYYY-MM-DD) between ``from`` and ``to``. */
 export async function tradingDays(token: string, from: string, to: string): Promise<Set<string>> {
-  const query = new URLSearchParams({ market: "US", begin: from, end: to });
+  const query = new URLSearchParams({ market: "US", start: from, end: to });
   const rows = rowsOf(await apiGet(token, `/api/v1.0/quote/trading-days?${query}`));
   const days = new Set<string>();
   for (const row of rows) {
