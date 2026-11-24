@@ -56,6 +56,7 @@ class App:
         self.settings, self.now = settings, now
         self.store = store or Store(settings.db_path)
         self.health = Health()
+        self._opend_failures = 0
         self.rules = RuleEngine(self.store)
         self.loop: asyncio.AbstractEventLoop | None = None
         self.gateway = gateway or MoomooGateway(settings.moomoo_host, settings.moomoo_port,
@@ -351,11 +352,13 @@ class App:
 
     async def opend_health(self) -> None:
         reason = await asyncio.to_thread(self.gateway.health_check)
-        if reason:
+        self._opend_failures = self._opend_failures + 1 if reason else 0
+        # A single failed check is usually the SDK reconnecting ("invalid connid"); alert once it persists.
+        if reason and self._opend_failures >= 2:
             alert = self.health.problem("opend", reason)
             if alert:
                 await self.notify(format_health(alert.text + " Live prices and holdings sync are paused."))
-        else:
+        elif not reason:
             recovered = self.health.resolved("opend")
             if recovered:
                 await self.notify(format_info(recovered.text))

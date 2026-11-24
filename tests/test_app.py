@@ -91,6 +91,7 @@ async def test_opend_health_alerts_once_and_recovers(app):
     app.gateway.reason = "OpenD not logged in"
     await app.opend_health()
     await app.opend_health()
+    await app.opend_health()
     app.gateway.reason = None
     await app.opend_health()
     assert len(app.sent) == 2 and "not logged in" in app.sent[0] and "Recovered" in app.sent[1]
@@ -228,3 +229,11 @@ async def test_holdings_sync_failure_shows_moomoo_reason(app):
     app.gateway.positions = fail
     await app.holdings_sync()
     assert "verify the device first" in app.sent[-1]
+
+
+async def test_opend_single_blip_is_silent(app):
+    app.gateway.reason = "OpenD unreachable: invalid connid"
+    await app.opend_health()
+    app.gateway.reason = None
+    await app.opend_health()
+    assert app.sent == []
