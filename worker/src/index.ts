@@ -1,5 +1,6 @@
 import { handleUpdate } from "./commands";
 import type { Env } from "./env";
+import { CALLBACK_PATH, handleCallback } from "./moomoo/oauth";
 import { Store } from "./store";
 import { hasValidSecret } from "./telegram";
 
@@ -7,6 +8,7 @@ export default {
   async fetch(req: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
     if (req.method === "GET" && url.pathname === "/health") return new Response("ok");
+    if (req.method === "GET" && url.pathname === CALLBACK_PATH) return handleCallback(req, env, new Store(env.DB), new Date());
     if (req.method === "POST" && url.pathname === "/telegram") {
       if (!hasValidSecret(req, env)) return new Response("unauthorized", { status: 401 });
       try {
