@@ -1,3 +1,4 @@
+import { aiProbe, DEFAULT_MODEL, estimateNeurons } from "./aiprobe";
 import type { Env } from "./env";
 import { apiGet, quotePost } from "./moomoo/api";
 import { accessToken, connectUrl, disconnect } from "./moomoo/oauth";
@@ -11,9 +12,22 @@ export const COMMANDS: [name: string, description: string][] = [
   ["status", "moomoo link, last sync and market state"],
   ["holdings", "Your moomoo positions"],
   ["moomoo", "Connect moomoo read-only (also: sync, reconnect, off)"],
+  ["aitest", "Measure one AI call's neuron cost (setup)"],
 ];
 
 const UNKNOWN = "Unknown command. Send /help.";
+
+async function aiTest(env: Env, model: string): Promise<void> {
+  try {
+    const r = await aiProbe(env.AI, model);
+    const neurons = estimateNeurons(model, r.promptTokens, r.completionTokens);
+    return send(env, `${model}\nTokens: ${r.promptTokens} in, ${r.completionTokens} out, ${r.ms} ms\n` +
+      (neurons === null ? "No neuron rate known for this model." :
+        `About ${Math.round(neurons)} neurons (free allowance: 10,000 a day).`));
+  } catch (e) {
+    return send(env, `AI test failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
 
 export async function handleUpdate(env: Env, store: Store, update: unknown, now: Date, origin: string): Promise<void> {
   const msg = (update as Update).message;
@@ -30,6 +44,8 @@ export async function handleUpdate(env: Env, store: Store, update: unknown, now:
       return send(env, await holdingsText(store));
     case "moomoo":
       return moomooCommand(env, store, args, now, origin);
+    case "aitest":
+      return aiTest(env, args[0] ?? DEFAULT_MODEL);
     default:
       return send(env, UNKNOWN);
   }
