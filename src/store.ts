@@ -112,6 +112,11 @@ export class Store {
     return row!.id;
   }
 
+  async getPlan(id: number): Promise<Plan | null> {
+    const row = await this.db.prepare("SELECT * FROM plans WHERE id = ?").bind(id).first<PlanRow>();
+    return row ? toPlan(row) : null;
+  }
+
   async planFor(code: string): Promise<Plan | null> {
     const row = await this.db.prepare(
       "SELECT * FROM plans WHERE code = ? AND state IN ('OPEN', 'TRIGGERED', 'HELD') ORDER BY id DESC LIMIT 1",
