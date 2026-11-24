@@ -27,7 +27,8 @@ ROUND_LIMIT_TEXT = "I couldn't finish looking that up. Try asking more narrowly.
 CAP_TEXT = "Daily chat limit reached (CHAT_MAX_PER_DAY). It resets tomorrow."
 WARN_TEXT = "(Heads-up: 90% of today's chat limit is used.)"
 TIMEOUT_TEXT = "That took too long, please try again."
-QUOTA_TEXT = "AI quota reached for now. Try again later."
+QUOTA_TEXT = ("The AI provider is refusing requests right now (busy, or today's quota is used up). "
+              "Try again in a few minutes.")
 EMPTY_TEXT = "Sorry, I don't have an answer for that."
 
 TOOL_DESCRIPTIONS = {

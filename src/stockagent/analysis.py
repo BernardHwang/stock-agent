@@ -414,7 +414,8 @@ class AnalysisWorker:
         if is_rate_limit(exc):
             self.store.requeue(item_id)
             self.store.kv_set(BACKOFF_KEY, (self.now() + RATE_LIMIT_BACKOFF).isoformat())
-            alert = self.health.problem("ai_quota", "AI quota reached. Remaining analyses will retry later. "
+            alert = self.health.problem("ai_quota", "The AI provider is refusing requests (busy or quota used up). "
+                                                    "Queued analyses will retry in 30 minutes. "
                                                     f"Provider said: {error_detail(exc)}")
             if alert:
                 await self.notify(format_health(alert.text))
