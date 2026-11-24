@@ -1,0 +1,1 @@
+{"ret_code":0,"ret_msg":"success","data":{"kline_list":[{"change_rate":9.37,"close":312.69,"date":20261123,"high":317,"last_close":285.9,"low":301.04,"open":310,"volume":2140112,"turnover":668000000},{"change_rate":-3.74,"close":285.9,"date":20261120,"high":300.58,"last_close":297.01,"low":281.725,"open":290.84,"volume":1627859,"turnover":469051178}]}}
