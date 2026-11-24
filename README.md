@@ -11,6 +11,9 @@ You place every order yourself in the moomoo app.
 
 > Informational only, not financial advice.
 
+> **Moving to a free Cloudflare Worker:** `worker/` holds the serverless version (moomoo web API instead of OpenD).
+> Its platform, moomoo link and stop-loss warning are built; analysis, chat and briefs are next. See `worker/README.md`.
+
 ## How it works
 
 | When (MYT) | What |
