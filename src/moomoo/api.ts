@@ -68,13 +68,23 @@ const SESSION_FIELD: Record<Session, string> = {
 export async function quotes(token: string, codes: string[], now: Date): Promise<Map<string, Quote>> {
   const out = new Map<string, Quote>();
   if (!codes.length) return out;
-  const session = marketSession(now);
-  const rows = rowsOf(await quotePost(token, "/api/v1.0/quote/snapshot", { code_list: codes }));
-  for (const row of rows) {
-    const price = positive(row[SESSION_FIELD[session]]);
-    if (typeof row.code === "string" && price !== null) out.set(row.code, { price, session });
+  for (const row of await snapshotRows(token, codes)) {
+    const quote = sessionQuote(row, now);
+    if (typeof row.code === "string" && quote) out.set(row.code, quote);
   }
   return out;
+}
+
+/** Raw snapshot rows (one per code): prices, 52-week range, valuation fields. */
+export async function snapshotRows(token: string, codes: string[]): Promise<Record<string, unknown>[]> {
+  return rowsOf(await quotePost(token, "/api/v1.0/quote/snapshot", { code_list: codes }));
+}
+
+/** The price of the session the New York clock is in, from one snapshot row; null when that session has none. */
+export function sessionQuote(row: Record<string, unknown>, now: Date): Quote | null {
+  const session = marketSession(now);
+  const price = positive(row[SESSION_FIELD[session]]);
+  return price === null ? null : { price, session };
 }
 
 /** New York trading dates (YYYY-MM-DD) between ``from`` and ``to``. */
