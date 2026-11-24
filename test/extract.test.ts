@@ -56,7 +56,7 @@ describe("extractPlan", () => {
   });
 
   it("gives up after the retry and returns the errors", async () => {
-    const askPm = vi.fn(async () => plan({ entry_low: 420, entry_high: 450, tp: 580, sl: 380 }));
+    const askPm = vi.fn(async () => plan({ entry_low: 420, entry_high: 450, partial_tp: null, tp: 580, sl: 380 }));
     const out = await extractPlan(askPm, 316);
     expect(out).toEqual({ errors: expect.arrayContaining([expect.stringContaining("buy zone")]) });
     expect(askPm).toHaveBeenCalledTimes(2);
