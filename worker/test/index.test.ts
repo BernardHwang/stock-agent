@@ -13,3 +13,19 @@ describe("router", () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe("scheduled", () => {
+  it("runs the minute job and never throws", async () => {
+    const { env } = await import("cloudflare:test");
+    const { vi } = await import("vitest");
+    const { Store } = await import("../src/store");
+    const store = new Store(env.DB);
+    await store.setSetting("moomoo_refresh", "r"); // connected, but moomoo is unreachable
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("network down"));
+    const { createExecutionContext, createScheduledController } = await import("cloudflare:test");
+    const worker = (await import("../src/index")).default;
+    await worker.scheduled(createScheduledController(), env, createExecutionContext());
+    expect(await store.getSetting("moomoo_failures")).toBe("1");
+    vi.restoreAllMocks();
+  });
+});

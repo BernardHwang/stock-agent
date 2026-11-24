@@ -1,4 +1,5 @@
 import { handleUpdate } from "./commands";
+import { runMinute } from "./cron";
 import type { Env } from "./env";
 import { CALLBACK_PATH, handleCallback } from "./moomoo/oauth";
 import { Store } from "./store";
@@ -21,5 +22,11 @@ export default {
     return new Response("not found", { status: 404 });
   },
 
-  async scheduled(_controller: ScheduledController, _env: Env, _ctx: ExecutionContext): Promise<void> {},
+  async scheduled(controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
+    try {
+      await runMinute(env, new Store(env.DB), new Date(controller.scheduledTime));
+    } catch (e) {
+      console.error("minute job failed", e instanceof Error ? e.name : typeof e); // no message: may hold secrets
+    }
+  },
 } satisfies ExportedHandler<Env>;
