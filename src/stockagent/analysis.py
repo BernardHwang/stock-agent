@@ -254,7 +254,9 @@ def extract_plan(report: str, code: str, held: Position | None, settings: Settin
         result = llm.invoke(prompt)
         if result is not None:
             return result if isinstance(result, PlanFields) else PlanFields.model_validate(result)
-    except Exception:
+    except Exception as exc:
+        if is_rate_limit(exc):
+            raise  # the fallback would hit the same limit
         log.info("structured output unsupported or failed for %s; falling back to JSON extraction", code)
     ai_msg = base_llm.invoke(prompt + "\n" + JSON_SCHEMA_HINT)
     content = getattr(ai_msg, "content", ai_msg)

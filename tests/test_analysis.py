@@ -227,6 +227,25 @@ def test_extract_plan_json_fallback(monkeypatch):
     assert res.action == "BUY" and res.tp == 130 and res.confidence == "high"
 
 
+def test_extract_plan_rate_limit_skips_the_fallback(monkeypatch):
+    import langchain.chat_models as cm
+
+    calls = []
+
+    class LimitedLLM:
+        def with_structured_output(self, schema):
+            return self
+
+        def invoke(self, prompt):
+            calls.append(prompt)
+            raise RateLimited("Error code: 429")
+
+    monkeypatch.setattr(cm, "init_chat_model", lambda *a, **kw: LimitedLLM())
+    with pytest.raises(RateLimited):
+        analysis.extract_plan("report", "US.NVDA", None, settings(llm_provider="cloudflare"))
+    assert len(calls) == 1
+
+
 def test_extractor_uses_configured_provider(monkeypatch):
     import langchain.chat_models as cm
 
