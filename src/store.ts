@@ -1,4 +1,5 @@
 import type { Plan, PlanFields, PlanState } from "./plans";
+import { localDayBounds } from "./time";
 
 export interface Position {
   code: string;
@@ -30,6 +31,37 @@ const toPlan = (r: PlanRow): Plan => ({
   partialTp: r.partial_tp, tp: r.tp, sl: r.sl, confidence: r.confidence, holdingMonths: r.holding_months,
   reasoning: r.reasoning, createdAt: r.created_at, fired: JSON.parse(r.fired) as string[],
 });
+
+export type QueueStatus = "pending" | "running" | "done" | "failed";
+
+export interface QueueItem {
+  id: number;
+  code: string;
+  reason: string;
+  priority: number;
+  status: QueueStatus;
+  createdAt: string;
+}
+
+interface QueueRow {
+  id: number;
+  code: string;
+  reason: string;
+  priority: number;
+  status: QueueStatus;
+  created_at: string;
+}
+
+const toQueueItem = (r: QueueRow): QueueItem => ({
+  id: r.id, code: r.code, reason: r.reason, priority: r.priority, status: r.status, createdAt: r.created_at,
+});
+
+export interface Report {
+  code: string;
+  at: string;
+  price: number | null;
+  text: string;
+}
 
 export class Store {
   constructor(private readonly db: D1Database) {}
@@ -78,6 +110,84 @@ export class Store {
     ).bind(code, state, f.action, f.entryLow, f.entryHigh, f.partialTp, f.tp, f.sl, f.confidence, f.holdingMonths,
       f.reasoning, at.toISOString()).first<{ id: number }>();
     return row!.id;
+  }
+
+  async planFor(code: string): Promise<Plan | null> {
+    const row = await this.db.prepare(
+      "SELECT * FROM plans WHERE code = ? AND state IN ('OPEN', 'TRIGGERED', 'HELD') ORDER BY id DESC LIMIT 1",
+    ).bind(code).first<PlanRow>();
+    return row ? toPlan(row) : null;
+  }
+
+  // Analysis queue
+
+  /** False when the code already has a pending or running item. */
+  async enqueue(code: string, reason: string, priority: number, at: Date): Promise<boolean> {
+    const busy = await this.db.prepare("SELECT 1 FROM queue WHERE code = ? AND status IN ('pending', 'running') LIMIT 1")
+      .bind(code).first();
+    if (busy) return false;
+    await this.db.prepare("INSERT INTO queue (code, reason, priority, status, created_at) VALUES (?, ?, ?, 'pending', ?)")
+      .bind(code, reason, priority, at.toISOString()).run();
+    return true;
+  }
+
+  async nextQueued(): Promise<QueueItem | null> {
+    const row = await this.db.prepare(
+      "SELECT * FROM queue WHERE status = 'pending' ORDER BY priority, created_at, id LIMIT 1",
+    ).first<QueueRow>();
+    return row ? toQueueItem(row) : null;
+  }
+
+  async queueItem(id: number): Promise<QueueItem | null> {
+    const row = await this.db.prepare("SELECT * FROM queue WHERE id = ?").bind(id).first<QueueRow>();
+    return row ? toQueueItem(row) : null;
+  }
+
+  async pendingItems(): Promise<QueueItem[]> {
+    const { results } = await this.db.prepare(
+      "SELECT * FROM queue WHERE status = 'pending' ORDER BY priority, created_at, id",
+    ).all<QueueRow>();
+    return results.map(toQueueItem);
+  }
+
+  async setQueueStatus(id: number, status: QueueStatus): Promise<void> {
+    await this.db.prepare("UPDATE queue SET status = ? WHERE id = ?").bind(status, id).run();
+  }
+
+  async isRunning(): Promise<boolean> {
+    return Boolean(await this.db.prepare("SELECT 1 FROM queue WHERE status = 'running' LIMIT 1").first());
+  }
+
+  // Runs (the daily analysis budget)
+
+  async recordRun(code: string, at: Date): Promise<void> {
+    await this.db.prepare("INSERT INTO runs (code, at) VALUES (?, ?)").bind(code, at.toISOString()).run();
+  }
+
+  async forgetRun(code: string, at: Date): Promise<void> {
+    await this.db.prepare("DELETE FROM runs WHERE rowid = (SELECT rowid FROM runs WHERE code = ? AND at = ? LIMIT 1)")
+      .bind(code, at.toISOString()).run();
+  }
+
+  /** Runs during the local day ``day`` (YYYY-MM-DD) in ``tz``. */
+  async countRunsOn(day: string, tz: string): Promise<number> {
+    const [start, end] = localDayBounds(day, tz);
+    const row = await this.db.prepare("SELECT COUNT(*) AS n FROM runs WHERE at >= ? AND at < ?").bind(start, end)
+      .first<{ n: number }>();
+    return row?.n ?? 0;
+  }
+
+  // Reports (the latest full analysis per code)
+
+  async saveReport(code: string, text: string, price: number | null, at: Date): Promise<void> {
+    await this.db.prepare(
+      "INSERT INTO reports (code, at, price, text) VALUES (?, ?, ?, ?) " +
+      "ON CONFLICT(code) DO UPDATE SET at = excluded.at, price = excluded.price, text = excluded.text",
+    ).bind(code, at.toISOString(), price, text).run();
+  }
+
+  async loadReport(code: string): Promise<Report | null> {
+    return this.db.prepare("SELECT code, at, price, text FROM reports WHERE code = ?").bind(code).first<Report>();
   }
 
   async updatePlan(p: Plan): Promise<void> {

@@ -46,3 +46,12 @@ describe("inPriceWindow", () => {
     expect(inPriceWindow(new Date("2026-11-24T17:00:00Z"), days, "24h")).toBe(true);
   });
 });
+
+describe("zonedMidnight", () => {
+  it("finds local midnight in fixed and DST time zones", async () => {
+    const { zonedMidnight } = await import("../src/time");
+    expect(zonedMidnight("2026-11-25", "Asia/Kuala_Lumpur").toISOString()).toBe("2026-11-24T16:00:00.000Z");
+    expect(zonedMidnight("2026-07-15", "America/New_York").toISOString()).toBe("2026-07-15T04:00:00.000Z");
+    expect(zonedMidnight("2026-11-24", "America/New_York").toISOString()).toBe("2026-11-24T05:00:00.000Z");
+  });
+});

@@ -23,6 +23,19 @@ export function localParts(now: Date, tz: string): LocalParts {
   };
 }
 
+/** UTC instant of 00:00 on ``date`` (YYYY-MM-DD) in ``tz``. */
+export function zonedMidnight(date: string, tz: string): Date {
+  const guess = new Date(`${date}T00:00:00Z`);
+  const local = localParts(guess, tz);
+  const shownAsUtc = Date.parse(`${local.date}T${String(local.hour).padStart(2, "0")}:${String(local.minute).padStart(2, "0")}:00Z`);
+  return new Date(guess.getTime() - (shownAsUtc - guess.getTime())); // shift by the zone's offset at that moment
+}
+
+/** [start, end) of the local day ``date`` in ``tz``, as UTC ISO strings. */
+export function localDayBounds(date: string, tz: string): [string, string] {
+  return [zonedMidnight(date, tz).toISOString(), zonedMidnight(nextDate(date), tz).toISOString()];
+}
+
 function nextDate(date: string): string {
   const d = new Date(`${date}T12:00:00Z`);
   d.setUTCDate(d.getUTCDate() + 1);

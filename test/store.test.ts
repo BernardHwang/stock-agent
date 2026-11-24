@@ -49,3 +49,50 @@ describe("Store", () => {
     expect((await s.activePlans())[0]!.fired).toEqual(["SL"]);
   });
 });
+
+describe("analysis queue, runs and reports", () => {
+  it("queues a code once until its item is done", async () => {
+    const s = new Store(env.DB);
+    expect(await s.enqueue("US.MDB", "chat", 0, NOW)).toBe(true);
+    expect(await s.enqueue("US.MDB", "weekly", 2, NOW)).toBe(false);
+    const item = (await s.nextQueued())!;
+    await s.setQueueStatus(item.id, "done");
+    expect(await s.enqueue("US.MDB", "chat", 0, NOW)).toBe(true);
+  });
+
+  it("serves the lowest priority first, then the oldest", async () => {
+    const s = new Store(env.DB);
+    await s.enqueue("US.A", "weekly", 3, NOW);
+    await s.enqueue("US.B", "weekly", 3, new Date(NOW.getTime() + 1000));
+    await s.enqueue("US.C", "chat", 0, new Date(NOW.getTime() + 2000));
+    expect((await s.nextQueued())!.code).toBe("US.C");
+    await s.setQueueStatus((await s.nextQueued())!.id, "running");
+    expect((await s.nextQueued())!.code).toBe("US.A");
+    expect(await s.isRunning()).toBe(true);
+  });
+
+  it("counts runs by the owner's local day and can forget one", async () => {
+    const s = new Store(env.DB);
+    const a = new Date("2026-11-24T16:30:00Z"); // 00:30 MYT on 11-25
+    await s.recordRun("US.A", a);
+    await s.recordRun("US.B", new Date("2026-11-24T15:30:00Z")); // 23:30 MYT on 11-24
+    expect(await s.countRunsOn("2026-11-25", "Asia/Kuala_Lumpur")).toBe(1);
+    await s.forgetRun("US.A", a);
+    expect(await s.countRunsOn("2026-11-25", "Asia/Kuala_Lumpur")).toBe(0);
+  });
+
+  it("keeps the newest report per code", async () => {
+    const s = new Store(env.DB);
+    await s.saveReport("US.MDB", "old", 300, NOW);
+    await s.saveReport("US.MDB", "new", 316, new Date(NOW.getTime() + 1000));
+    expect(await s.loadReport("US.MDB")).toMatchObject({ text: "new", price: 316 });
+    expect(await s.loadReport("US.X")).toBeNull();
+  });
+
+  it("finds the active plan for a code", async () => {
+    const s = new Store(env.DB);
+    expect(await s.planFor("US.MDB")).toBeNull();
+    await s.savePlan("US.MDB", fields, "HELD", NOW);
+    expect((await s.planFor("US.MDB"))!.state).toBe("HELD");
+  });
+});
