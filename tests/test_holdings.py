@@ -101,3 +101,11 @@ def test_held_buy_plan_far_from_cost_is_replaced(store):
     assert store.active_plan("US.NVDA") is None and store.pending_count() == 1
     assert sync_holdings(store, [Position(code="US.NVDA", qty=10, avg_cost=358)], NOW) == []
     assert store.pending_count() == 1
+
+
+def test_averaging_down_keeps_a_linked_plan(store):
+    apply_new_analysis(store, "US.NVDA", buy(), "weekly", NOW)  # zone 100-105
+    sync_holdings(store, [Position(code="US.NVDA", qty=10, avg_cost=102)], NOW)
+    sync_holdings(store, [Position(code="US.NVDA", qty=30, avg_cost=80)], NOW)
+    plan = store.active_plan("US.NVDA")
+    assert plan.state == PlanState.HELD and plan.fields.action == "HOLD" and store.pending_count() == 0

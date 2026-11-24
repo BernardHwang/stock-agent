@@ -49,6 +49,7 @@ def sync_holdings(store: Store, positions: list[Position], now: datetime) -> lis
             continue
         if plan is not None and plan.state in (PlanState.OPEN, PlanState.TRIGGERED):
             plan.state = PlanState.HELD
+            plan.fields = plan.fields.model_copy(update={"action": Action.HOLD})  # owned now, as lifecycle does
             store.update_plan(plan)
             alerts.append(Alert(code=code, kind="info", plan_id=plan.id,
                                 text=f"I see you picked up {code} in moomoo. I've linked it to plan #{plan.id} "
