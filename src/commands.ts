@@ -69,8 +69,10 @@ async function aiTest(env: Env, model: string): Promise<void> {
 }
 
 export async function handleUpdate(env: Env, store: Store, update: unknown, now: Date, origin: string): Promise<void> {
-  const msg = (update as Update).message;
+  const { message: msg, update_id: updateId } = update as Update;
   if (!msg || String(msg.chat.id) !== env.OWNER_CHAT_ID || !msg.text) return;
+  // Telegram redelivers an update it thinks timed out (a long chat answer can); answer each one once.
+  if (updateId !== undefined && !(await store.markOnce(`update:${updateId}`, now))) return;
   if (!msg.text.startsWith("/")) {
     await telegramApi(env, "sendChatAction", { chat_id: env.OWNER_CHAT_ID, action: "typing" });
     return send(env, await chatReply(env, store, msg.text, msg.reply_to_message?.text ?? null, now));

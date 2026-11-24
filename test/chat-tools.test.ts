@@ -17,6 +17,20 @@ const hold: PlanFields = {
   confidence: "medium", holdingMonths: 6, reasoning: "Keep holding.",
 };
 
+
+/** moomoo connected, with a snapshot that knows US.MDB and US.NVDA only. */
+async function connected(store: Store) {
+  await store.setSetting("moomoo_refresh", "r");
+  await store.setSetting("moomoo_access", "tok");
+  await store.setSetting("moomoo_access_until", "2026-12-31T00:00:00Z");
+  return mockFetch((url, init) => {
+    if (!url.endsWith("/quote/snapshot")) return undefined;
+    const codes = (JSON.parse(String(init.body)) as { code_list: string[] }).code_list;
+    const known = codes.filter((c) => c === "US.MDB" || c === "US.NVDA");
+    return Response.json({ ret_code: 0, data: { snapshot_list: known.map((code) => ({ code, last_price: 100 })) } });
+  });
+}
+
 describe("normalizeTicker", () => {
   it("accepts US tickers in any common form", () => {
     for (const t of ["mdb", "MDB", " US.MDB ", "us.mdb"]) expect(normalizeTicker(t)).toBe("US.MDB");
@@ -35,6 +49,7 @@ describe("chat tools", () => {
 
   it("queues an analysis once and says when it will run", async () => {
     const store = new Store(env.DB);
+    await connected(store);
     const first = await call(store, "queue_analysis", { ticker: "mdb" });
     expect(first).toMatchObject({ code: "US.MDB", status: "queued", position: 1, runs_left_today: 2 });
     expect((await call(store, "queue_analysis", { ticker: "MDB" })).status).toBe("already queued");
@@ -43,10 +58,23 @@ describe("chat tools", () => {
 
   it("explains a wait at the daily limit", async () => {
     const store = new Store(env.DB);
+    await connected(store);
     await store.recordRun("US.X", NOW);
     await store.recordRun("US.Y", NOW);
     const out = await call(store, "queue_analysis", { ticker: "MDB" });
     expect(out.note).toContain("tomorrow");
+  });
+
+  it("refuses a ticker moomoo doesn't know, without queuing it", async () => {
+    const store = new Store(env.DB);
+    await connected(store);
+    expect((await call(store, "queue_analysis", { ticker: "XYZQ" })).error).toContain("couldn't find US.XYZQ");
+    expect(await store.pendingItems()).toEqual([]);
+  });
+
+  it("refuses to queue while moomoo isn't connected", async () => {
+    mockFetch(() => undefined);
+    expect((await call(new Store(env.DB), "queue_analysis", { ticker: "MDB" })).error).toContain("/moomoo");
   });
 
   it("refuses a non-US ticker", async () => {

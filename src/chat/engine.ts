@@ -9,6 +9,7 @@ import { runTool, TOOLS } from "./tools";
 
 const HISTORY = 12;
 const MAX_TOOL_ROUNDS = 4;
+const MAX_TOOLS_PER_ROUND = 3;
 const MAX_TOKENS = 600;
 
 export const FALLBACK = "Sorry, I don't have an answer for that.";
@@ -45,6 +46,7 @@ export async function chatReply(env: Env, store: Store, text: string, quoted: st
   const model = env.DEEP_MODEL || DEFAULT_DEEP_MODEL;
 
   let answer = "";
+  let queuedThisTurn = false;
   try {
     for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
       const lastRound = round === MAX_TOOL_ROUNDS;
@@ -54,9 +56,17 @@ export async function chatReply(env: Env, store: Store, text: string, quoted: st
         answer = out.text;
         break;
       }
-      // Tool results go back as plain text: works with any model, no provider-specific tool-message format.
-      const results = await Promise.all(out.toolCalls.map(async (c) =>
-        `${c.name}(${JSON.stringify(c.arguments)}): ${await runTool(env, store, c.name, c.arguments, now)}`));
+      // One at a time (parallel calls could race moomoo token refreshes), a few per round, and at most one
+      // analysis per message, so a looping model or an instruction hidden in a headline can't run up the budget.
+      const results: string[] = [];
+      for (const c of out.toolCalls.slice(0, MAX_TOOLS_PER_ROUND)) {
+        const result = c.name === "queue_analysis" && queuedThisTurn
+          ? JSON.stringify({ error: "Only one analysis per message; ask again for the next one." })
+          : await runTool(env, store, c.name, c.arguments, now);
+        if (c.name === "queue_analysis") queuedThisTurn = true;
+        // Tool results go back as plain text: works with any model, no provider-specific tool-message format.
+        results.push(`${c.name}(${JSON.stringify(c.arguments)}): ${result}`);
+      }
       messages.push({ role: "assistant", content: out.text || `Looking up: ${out.toolCalls.map((c) => c.name).join(", ")}` });
       messages.push({ role: "user", content: `Tool results:\n${results.join("\n")}` });
     }

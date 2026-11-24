@@ -4,6 +4,7 @@ import type { Store } from "./store";
 export type Button = { text: string; url: string };
 
 export interface Update {
+  update_id?: number;
   message?: { chat: { id: number }; from?: { id: number }; text?: string; reply_to_message?: { text?: string } };
 }
 

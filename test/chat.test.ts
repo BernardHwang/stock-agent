@@ -27,6 +27,10 @@ function scripted(...answers: ({ tool: string; args?: Record<string, unknown> } 
 describe("chatReply", () => {
   it("queues an analysis through a tool call, then answers", async () => {
     const store = new Store(env.DB);
+    await store.setSetting("moomoo_refresh", "r");
+    await store.setSetting("moomoo_access", "tok");
+    await store.setSetting("moomoo_access_until", "2026-12-31T00:00:00Z");
+    mockFetch(() => Response.json({ ret_code: 0, data: { snapshot_list: [{ code: "US.MDB", last_price: 316 }] } }));
     const { e, calls } = scripted({ tool: "queue_analysis", args: { ticker: "MDB" } }, "Queued MDB; the plan comes in a few minutes.");
     expect(await chatReply(e, store, "analyze MDB", null, NOW)).toBe("Queued MDB; the plan comes in a few minutes.");
     expect((await store.pendingItems()).map((i) => i.code)).toEqual(["US.MDB"]);
@@ -103,5 +107,44 @@ describe("chat in Telegram", () => {
       message: { chat: { id: 1001 }, text: "why?", reply_to_message: { text: "⚠️ Stop-loss: US.MDB" } },
     }, NOW, "https://worker.test");
     expect(ai[0]!.messages.at(-1)!.content).toContain("[Replying to: ⚠️ Stop-loss: US.MDB]");
+  });
+});
+
+describe("chat safety limits", () => {
+  it("runs at most 3 tools per round and queues at most one analysis per message", async () => {
+    const store = new Store(env.DB);
+    await store.setSetting("moomoo_refresh", "r");
+    await store.setSetting("moomoo_access", "tok");
+    await store.setSetting("moomoo_access_until", "2026-12-31T00:00:00Z");
+    mockFetch((url) => (url.endsWith("/quote/snapshot")
+      ? Response.json({ ret_code: 0, data: { snapshot_list: [{ code: "US.MDB", last_price: 316 }, { code: "US.NVDA", last_price: 165 }] } })
+      : undefined));
+    let n = 0;
+    const run = vi.fn(async (_m: string, input: { messages: Msg[] }) => {
+      n++;
+      if (n === 1) {
+        return { response: null, usage: {}, tool_calls: [
+          { name: "queue_analysis", arguments: { ticker: "MDB" } }, { name: "queue_analysis", arguments: { ticker: "NVDA" } },
+          { name: "list_plans", arguments: {} }, { name: "list_plans", arguments: {} }, { name: "list_plans", arguments: {} },
+        ] };
+      }
+      const results = input.messages.at(-1)!.content;
+      expect(results.match(/^\w+\(/gm)).toHaveLength(3); // only 3 of the 5 requested tools ran
+      expect(results).toContain("one analysis per message");
+      return { response: "Queued MDB.", usage: {} };
+    });
+    const e = { ...env, AI: { run } as unknown as Ai, CHAT_MAX_PER_DAY: "30" } as Env;
+    expect(await chatReply(e, store, "analyze MDB and NVDA", null, NOW)).toBe("Queued MDB.");
+    expect((await store.pendingItems()).map((i) => i.code)).toEqual(["US.MDB"]);
+  });
+
+  it("answers a Telegram update only once, even if Telegram delivers it twice", async () => {
+    const { e, calls: ai } = scripted("Hello!");
+    const sent = mockFetch(telegramOk);
+    const update = { update_id: 777, message: { chat: { id: 1001 }, text: "hi" } };
+    await handleUpdate(e, new Store(env.DB), update, NOW, "https://worker.test");
+    await handleUpdate(e, new Store(env.DB), update, NOW, "https://worker.test");
+    expect(sentTexts(sent)).toEqual(["Hello!"]);
+    expect(ai).toHaveLength(1);
   });
 });

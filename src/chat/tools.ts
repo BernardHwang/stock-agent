@@ -1,7 +1,7 @@
 /** Tools the chat model can call. Read-only, except queuing an analysis. Answers are compact JSON text. */
 import type { ToolDef } from "../ai";
 import type { Env } from "../env";
-import { quotes } from "../moomoo/api";
+import { quotes, snapshotRows } from "../moomoo/api";
 import { accessToken } from "../moomoo/oauth";
 import { headlines } from "../news";
 import type { Plan } from "../plans";
@@ -60,6 +60,12 @@ function code(args: Record<string, unknown>): string {
 class ToolError extends Error {}
 
 async function queueAnalysis(env: Env, store: Store, c: string, now: Date): Promise<Record<string, unknown>> {
+  // Check first, so a typo or a made-up ticker never costs one of the day's analyses.
+  const token = await accessToken(env, store, now);
+  if (!token) throw new ToolError("moomoo isn't connected, so I can't analyse yet. Connect it with /moomoo.");
+  if (!(await snapshotRows(token, [c])).some((r) => r.code === c)) {
+    throw new ToolError(`I couldn't find ${c} on moomoo. Check the ticker.`);
+  }
   const added = await store.enqueue(c, "chat", 0, now);
   const pending = await store.pendingItems();
   const gate = await analysisGate(env, store, now);
