@@ -46,15 +46,17 @@ The cron fires every minute.
 ```
 npm install
 npm test             # vitest in the Workers runtime, offline
-npm run typecheck    # wrangler types --check + tsc
+npm run typecheck    # tsc
+npm run types        # regenerate worker-configuration.d.ts after changing wrangler.jsonc
 ```
 
-Run `npx wrangler types` after changing `wrangler.jsonc`. For `npx wrangler dev`, copy `.dev.vars.example` to
+For `npx wrangler dev`, copy `.dev.vars.example` to
 `.dev.vars`; keep a `.dev.vars` file even if empty, so wrangler never falls back to reading a stray `.env`.
 
 | Path | What |
 |---|---|
 | `src/index.ts` | Routes (`/health`, `/telegram`, `/moomoo/callback`) and the per-minute cron |
+| `src/setup.ts` | Self-setup after a deploy: Telegram webhook, command menu, moomoo client |
 | `src/commands.ts` | Telegram commands |
 | `src/moomoo/` | OAuth (`oauth.ts`) and the read-only API client (`api.ts`) |
 | `src/holdings.ts`, `src/cron.ts` | Holdings sync; calendar, stop-loss checks and failure notes |
@@ -62,40 +64,46 @@ Run `npx wrangler types` after changing `wrangler.jsonc`. For `npx wrangler dev`
 | `migrations/` | D1 schema |
 | `test/` | Tests (run inside the Workers runtime) and fixtures |
 
-## First deploy and live check
+## Deploy (push to deploy)
 
-You run these steps; nothing is pushed or deployed automatically.
+One-time setup; after that every push to `main` deploys.
 
-1. `npx wrangler login`
-2. `npx wrangler d1 create stock-agent`, then put the printed `database_id` into `wrangler.jsonc`.
-3. `npx wrangler d1 migrations apply stock-agent --remote`
-4. Set the secrets with `npx wrangler secret put <NAME>`:
-   - `TELEGRAM_BOT_TOKEN`
-   - `TELEGRAM_WEBHOOK_SECRET` (any long random string)
+1. **D1 database:** create it once (dashboard: Storage & Databases → D1 → Create, or `npx wrangler d1 create stock-agent`),
+   and put its id in `database_id` in `wrangler.jsonc`.
+2. **Connect the repo:** dashboard → Workers & Pages → stock-agent → Settings → Builds → Connect, pick this GitHub repo.
+   - Build command: `npm test` (a failing test stops the deploy)
+   - Deploy command: `npm run deploy` (applies D1 migrations, then deploys)
+3. **Secrets:** dashboard → stock-agent → Settings → Variables and Secrets → add as type **Secret**:
+   - `TELEGRAM_BOT_TOKEN` (from @BotFather)
    - `OWNER_CHAT_ID` (your private chat id)
-5. `npx wrangler deploy`. Note the `https://stock-agent.<you>.workers.dev` URL.
-6. Register a moomoo client. Self-service, no approval:
-   ```
-   curl -s -X POST https://webapi.moomoo.com/oauth2/register -H "content-type: application/json" \
-     -d '{"client_name":"stock-agent","redirect_uris":["https://stock-agent.<you>.workers.dev/moomoo/callback"],"token_endpoint_auth_method":"none","grant_types":["authorization_code","refresh_token"],"response_types":["code"]}'
-   ```
-   Store the returned `client_id` with `npx wrangler secret put MOOMOO_CLIENT_ID`. Don't paste the response anywhere.
-7. Point Telegram at the Worker. If the old Python bot still polls with this token, stop it first:
-   ```
-   curl -s "https://api.telegram.org/bot<TOKEN>/setWebhook" \
-     -d "url=https://stock-agent.<you>.workers.dev/telegram" -d "secret_token=<TELEGRAM_WEBHOOK_SECRET>"
-   ```
-8. In Telegram, check each of these:
-   - `/help` answers.
-   - `/moomoo` connects. On moomoo's page allow **positions and quotes only**, and leave trading **off**.
-   - `/moomoo sync` lists your positions.
-   - `/moomoo probe post /api/v1.0/quote/snapshot {"code_list":["US.MDB"]}`: run it at about 13:00, 18:00 and 06:00
-     Malaysia time, and note whether `overnight_price`, `pre_price` and `after_price` are filled. If they stay 0,
-     set `PRICE_HOURS` to `"regular"` in `wrangler.jsonc` and redeploy.
-   - `/moomoo probe /api/v1.0/quote/trading-days?market=US&begin=<today>&end=<+30d>` shows trading dates. If
-     moomoo wants other parameter names, adjust `tradingDays()` in `src/moomoo/api.ts`.
-   - `/aitest` reports the neuron cost of one 70B call. This sizes the coming analysis pipeline.
-9. Replace the fixtures in `test/fixtures/` with the real, masked answers from step 8, then run `npm test`.
+4. **Address:** set `PUBLIC_URL` in `wrangler.jsonc` to your Worker address
+   (`https://stock-agent.<you>.workers.dev`) and push.
+
+Within a minute of each deploy the Worker sets itself up, once per address:
+- registers its Telegram webhook, with a secret it generates and keeps in D1, and fills the "/" command menu;
+- registers a moomoo OAuth client for its `/moomoo/callback` and keeps the client id in D1, then tells you to
+  send `/moomoo`.
+
+A failed step is retried hourly. `TELEGRAM_WEBHOOK_SECRET` and `MOOMOO_CLIENT_ID` are optional secrets that
+override the generated ones. Changing `PUBLIC_URL` repeats the setup; for moomoo that means a fresh `/moomoo`
+sign-in.
+
+## Live check
+
+In Telegram:
+- `/help` answers.
+- `/moomoo` connects. On moomoo’s page allow **positions and quotes only**, and leave trading **off**.
+- `/moomoo sync` lists your positions.
+- `/moomoo probe post /api/v1.0/quote/snapshot {"code_list":["US.MDB"]}`: run it at about 13:00, 18:00 and 06:00
+  Malaysia time, and note whether `overnight_price`, `pre_price` and `after_price` are filled. If they stay 0, set
+  `PRICE_HOURS` to `"regular"` in `wrangler.jsonc` and push.
+- `/moomoo probe /api/v1.0/quote/trading-days?market=US&begin=<today>&end=<+30d>` shows trading dates. If moomoo wants
+  other parameter names, adjust `tradingDays()` in `src/moomoo/api.ts`.
+- `/aitest` reports the neuron cost of one 70B call. This sizes the coming analysis pipeline.
+
+Then replace the fixtures in `test/fixtures/` with the real, masked answers and run `npm test`.
+If `/help` gets no answer, check `https://api.telegram.org/bot<TOKEN>/getWebhookInfo` for `last_error_message`, or run
+`npx wrangler tail` while you send a command.
 
 ## Limits on the free plan
 

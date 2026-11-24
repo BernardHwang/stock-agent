@@ -35,11 +35,37 @@ interface TokenResult {
   body: Record<string, unknown>;
 }
 
-async function tokenRequest(env: Env, params: Record<string, string>): Promise<TokenResult> {
+/** The moomoo client id: the configured secret, else the one this Worker registered for itself. */
+export async function clientId(env: Env, store: Store): Promise<string | null> {
+  return env.MOOMOO_CLIENT_ID || (await store.getSetting("moomoo_client_id"));
+}
+
+/**
+ * Register this Worker as a moomoo OAuth client (public client, PKCE). Returns the new client id; throws when moomoo
+ * refuses. Registration grants nothing by itself: the owner still picks read-only scopes on moomoo's consent page.
+ */
+export async function registerClient(redirectUri: string): Promise<string> {
+  const res = await fetch(`${MOOMOO_API}/oauth2/register`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      client_name: "stock-agent",
+      redirect_uris: [redirectUri],
+      token_endpoint_auth_method: "none",
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+    }),
+  });
+  const body = (await res.json().catch(() => ({}))) as { client_id?: unknown };
+  if (!res.ok || typeof body.client_id !== "string") throw new MoomooUnavailable(`moomoo client registration answered ${res.status}`);
+  return body.client_id;
+}
+
+async function tokenRequest(env: Env, store: Store, params: Record<string, string>): Promise<TokenResult> {
   const res = await fetch(`${MOOMOO_API}/oauth2/token`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ client_id: env.MOOMOO_CLIENT_ID ?? "", ...params }).toString(),
+    body: new URLSearchParams({ client_id: (await clientId(env, store)) ?? "", ...params }).toString(),
   });
   let body: Record<string, unknown> = {};
   try {
@@ -75,7 +101,7 @@ export async function connectUrl(env: Env, store: Store, origin: string, now: Da
   const state = random(24);
   await store.setSetting("moomoo_pending", JSON.stringify({ state, verifier, at: now.getTime() }));
   return `${MOOMOO_API}/oauth2/authorize/confirm?${new URLSearchParams({
-    client_id: env.MOOMOO_CLIENT_ID ?? "",
+    client_id: (await clientId(env, store)) ?? "",
     code_challenge: await challengeOf(verifier),
     code_challenge_method: "S256",
     redirect_uri: origin + CALLBACK_PATH,
@@ -106,7 +132,7 @@ export async function handleCallback(req: Request, env: Env, store: Store, now: 
     await send(env, "moomoo wasn't connected: the approval was cancelled. Send /moomoo to try again.");
     return page("Not connected", "The approval was cancelled. You can close this page.");
   }
-  const { ok, body } = await tokenRequest(env, {
+  const { ok, body } = await tokenRequest(env, store, {
     grant_type: "authorization_code", code, redirect_uri: url.origin + CALLBACK_PATH, code_verifier: pending.verifier,
   });
   if (!ok || typeof body.refresh_token !== "string") {
@@ -138,7 +164,7 @@ export async function accessToken(env: Env, store: Store, now: Date): Promise<st
   const until = await store.getSetting("moomoo_access_until");
   if (cached && until && new Date(until).getTime() - now.getTime() > REFRESH_MARGIN_MS) return cached;
 
-  const { ok, status, body } = await tokenRequest(env, { grant_type: "refresh_token", refresh_token: refresh });
+  const { ok, status, body } = await tokenRequest(env, store, { grant_type: "refresh_token", refresh_token: refresh });
   // Only a clear "this grant is no longer valid" ends the connection; anything else (maintenance page, firewall,
   // rate limit) is a moomoo problem that pauses checks without making the owner sign in again.
   const expired = status === 401 || (status === 400 && body.error === "invalid_grant");

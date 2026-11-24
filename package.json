@@ -2,8 +2,9 @@
   "name": "stock-agent-worker",
   "scripts": {
     "test": "vitest run",
-    "typecheck": "wrangler types --check && tsc --noEmit",
-    "deploy": "wrangler deploy"
+    "typecheck": "tsc --noEmit",
+    "deploy": "wrangler d1 migrations apply stock-agent --remote && wrangler deploy",
+    "types": "wrangler types"
   },
   "private": true,
   "type": "module",

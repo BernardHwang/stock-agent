@@ -2,7 +2,7 @@ import { aiProbe, DEFAULT_MODEL, estimateNeurons } from "./aiprobe";
 import type { Env } from "./env";
 import { syncFromMoomoo } from "./holdings";
 import { apiGet, quotePost } from "./moomoo/api";
-import { accessToken, connectUrl, disconnect } from "./moomoo/oauth";
+import { accessToken, clientId, connectUrl, disconnect } from "./moomoo/oauth";
 import type { Store } from "./store";
 import { send, type Update } from "./telegram";
 import { inPriceWindow, inUsSession } from "./time";
@@ -111,7 +111,9 @@ async function probe(env: Env, store: Store, args: string[], now: Date): Promise
 }
 
 async function moomooCommand(env: Env, store: Store, args: string[], now: Date, origin: string): Promise<void> {
-  if (!env.MOOMOO_CLIENT_ID) return send(env, "moomoo isn't configured on this bot (no MOOMOO_CLIENT_ID).");
+  if (!(await clientId(env, store))) {
+    return send(env, "moomoo isn't set up yet: set PUBLIC_URL so the bot registers itself (or MOOMOO_CLIENT_ID).");
+  }
   const sub = args[0]?.toLowerCase() ?? "";
   if (sub === "probe") return probe(env, store, args.slice(1), now);
   if (sub === "sync") return syncCommand(env, store, now);

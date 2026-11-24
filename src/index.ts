@@ -3,7 +3,8 @@ import { runMinute } from "./cron";
 import type { Env } from "./env";
 import { CALLBACK_PATH, handleCallback } from "./moomoo/oauth";
 import { Store } from "./store";
-import { hasValidSecret } from "./telegram";
+import { ensureSetup } from "./setup";
+import { hasValidSecret, webhookSecret } from "./telegram";
 
 export default {
   async fetch(req: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
@@ -11,9 +12,10 @@ export default {
     if (req.method === "GET" && url.pathname === "/health") return new Response("ok");
     if (req.method === "GET" && url.pathname === CALLBACK_PATH) return handleCallback(req, env, new Store(env.DB), new Date());
     if (req.method === "POST" && url.pathname === "/telegram") {
-      if (!hasValidSecret(req, env)) return new Response("unauthorized", { status: 401 });
+      const store = new Store(env.DB);
+      if (!hasValidSecret(req, await webhookSecret(env, store))) return new Response("unauthorized", { status: 401 });
       try {
-        await handleUpdate(env, new Store(env.DB), await req.json(), new Date(), url.origin);
+        await handleUpdate(env, store, await req.json(), new Date(), url.origin);
       } catch (e) {
         console.error("telegram update failed", e instanceof Error ? e.name : typeof e); // no message: may hold secrets
       }
@@ -23,8 +25,15 @@ export default {
   },
 
   async scheduled(controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
+    const store = new Store(env.DB);
+    const now = new Date(controller.scheduledTime);
     try {
-      await runMinute(env, new Store(env.DB), new Date(controller.scheduledTime));
+      await ensureSetup(env, store, now);
+    } catch (e) {
+      console.error("setup failed", e instanceof Error ? e.name : typeof e); // no message: may hold secrets
+    }
+    try {
+      await runMinute(env, store, now);
     } catch (e) {
       console.error("minute job failed", e instanceof Error ? e.name : typeof e); // no message: may hold secrets
     }

@@ -1,6 +1,7 @@
 # Copy to .dev.vars for `npx wrangler dev`. In production set these with `npx wrangler secret put <NAME>`.
 # Never put real values in this file: it is committed. Real values go in .dev.vars (gitignored).
 TELEGRAM_BOT_TOKEN=
+# Optional (the Worker generates and keeps its own): TELEGRAM_WEBHOOK_SECRET, MOOMOO_CLIENT_ID
 TELEGRAM_WEBHOOK_SECRET=
 OWNER_CHAT_ID=
 MOOMOO_CLIENT_ID=
