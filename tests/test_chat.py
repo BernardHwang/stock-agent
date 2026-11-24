@@ -131,8 +131,10 @@ async def test_timeout(store, monkeypatch):
 
 
 async def test_rate_limit(store):
-    eng, _ = engine(store, [Exception("429 rate limit")])
-    assert (await eng.reply("hi")).text == chat.QUOTA_TEXT
+    eng, _ = engine(store, [Exception("Error code: 429 - daily free allocation used, accounts/abc123def/ai")])
+    text = (await eng.reply("hi")).text
+    assert text.startswith(chat.QUOTA_TEXT) and "daily free allocation used" in text
+    assert "abc123def" not in text
 
 
 async def test_other_error(store):

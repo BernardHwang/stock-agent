@@ -264,15 +264,22 @@ def report_section(report: str, title: str) -> str | None:
     return match.group(1).strip() if match else None
 
 
+_RATE_LIMIT_RE = re.compile(r"\b429\b|resourceexhausted|resource_exhausted|rate limit|ratelimit|quota")
+
+
 def is_rate_limit(exc: BaseException) -> bool:
     seen: BaseException | None = exc
     while seen is not None:
-        text = f"{type(seen).__name__} {seen}".lower()
-        if any(k in text for k in ("429", "resourceexhausted", "resource_exhausted", "rate limit", "ratelimit",
-                                   "quota")):
+        if getattr(seen, "status_code", None) == 429 or _RATE_LIMIT_RE.search(f"{type(seen).__name__} {seen}".lower()):
             return True
         seen = seen.__cause__ or seen.__context__
     return False
+
+
+def error_detail(exc: BaseException, limit: int = 200) -> str:
+    """The provider's own reason, short and with the account id masked, for the owner to see."""
+    text = re.sub(r"accounts/[^/\s'\"]+", "accounts/…", " ".join(str(exc).split()))
+    return text[:limit]
 
 
 def _utcnow() -> datetime:
@@ -368,7 +375,8 @@ class AnalysisWorker:
         """Returns False when draining should stop (AI quota exhausted)."""
         if is_rate_limit(exc):
             self.store.requeue(item_id)
-            alert = self.health.problem("ai_quota", "AI quota reached. Remaining analyses will retry later.")
+            alert = self.health.problem("ai_quota", "AI quota reached. Remaining analyses will retry later. "
+                                                    f"Provider said: {error_detail(exc)}")
             if alert:
                 await self.notify(format_health(alert.text))
             return False

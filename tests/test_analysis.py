@@ -153,6 +153,7 @@ def test_is_rate_limit():
     assert is_rate_limit(RateLimited("429 Too Many Requests"))
     assert is_rate_limit(RuntimeError("ResourceExhausted: quota"))
     assert not is_rate_limit(ValueError("bad"))
+    assert not is_rate_limit(ValueError("Error code: 400 - request id 7f4293ab, 14290 tokens"))
 
 
 def test_config_passed_to_tradingagents(monkeypatch):

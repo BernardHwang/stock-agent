@@ -11,7 +11,7 @@ from typing import Any
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool, StructuredTool
 
-from .analysis import TOOL_CALL_FILLER, is_rate_limit, langchain_provider, llm_client_kwargs
+from .analysis import TOOL_CALL_FILLER, error_detail, is_rate_limit, langchain_provider, llm_client_kwargs
 from .chat_tools import TOOL_NAMES, ChatToolbox
 from .config import Settings, local_date
 from .models import ChatMessage
@@ -265,7 +265,8 @@ class ChatEngine:
                 answer = TIMEOUT_TEXT
             except Exception as exc:
                 log.exception("chat turn failed")
-                answer = QUOTA_TEXT if is_rate_limit(exc) else f"Couldn't answer that ({type(exc).__name__})."
+                answer = (f"{QUOTA_TEXT}\nProvider said: {error_detail(exc)}" if is_rate_limit(exc)
+                          else f"Couldn't answer that ({type(exc).__name__}).")
             if self._warn:
                 answer = f"{answer}\n\n{WARN_TEXT}"
             self.store.log_message("bot", answer, self.now())
