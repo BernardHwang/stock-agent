@@ -1,7 +1,6 @@
 """Wires the components into one long-running asyncio service."""
 
 import asyncio
-import html
 import logging
 from collections.abc import Awaitable, Callable, Coroutine
 from datetime import UTC, datetime, timedelta
@@ -113,7 +112,7 @@ class App:
         self.store.kv_set(key, "")
         note = await self.chat.follow_up(code, text)
         if note:
-            await self.notify(format_info(f"Update on {html.escape(code)}: {html.escape(note)}"))
+            await self.notify(format_info(f"Update on {code}: {note}"))
 
     async def handle_alerts(self, alerts: list[Alert]) -> None:
         now = self.now()
@@ -134,7 +133,7 @@ class App:
 
     def _enqueue_once_per_day(self, code: str, reason: str, key: str) -> bool:
         """Urgent re-reviews are capped at one per key per day so a flapping level can't burn the AI quota."""
-        day_key = f"{key}:{self.now().date().isoformat()}"
+        day_key = f"{key}:{local_date(self.now(), self.settings.tz).isoformat()}"
         if self.store.kv_get(day_key):
             return False
         self.store.kv_set(day_key, "1")
@@ -253,7 +252,7 @@ class App:
             return
         hits = await asyncio.to_thread(poll_news, self.store, held)
         for code, item in hits:
-            day_key = f"news_alerts:{code}:{self.now().date().isoformat()}"
+            day_key = f"news_alerts:{code}:{local_date(self.now(), self.settings.tz).isoformat()}"
             sent = int(self.store.kv_get(day_key) or 0)
             if sent >= MAX_NEWS_ALERTS_PER_DAY:  # a big story produces dozens of headlines
                 continue

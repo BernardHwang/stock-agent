@@ -245,3 +245,19 @@ async def test_news_alerts_capped_per_stock_per_day(app, monkeypatch):
     monkeypatch.setattr("stockagent.app.poll_news", lambda store, codes: hits)
     await app.news_poll()
     assert len(app.sent) == 3
+
+
+async def test_follow_up_html_not_escaped_twice(app):
+    async def follow_up(code, text):
+        return "<b>Plan</b> isn't changed"
+    app.chat.follow_up = follow_up
+    await app.on_analysis_result("US.MDB", "chat", "plan text")
+    assert "<b>Plan</b> isn&#x27;t" in app.sent[0] and "&amp;" not in app.sent[0] and "&lt;b&gt;" not in app.sent[0]
+
+
+async def test_daily_keys_use_the_owners_local_day(app):
+    # 20:00 UTC is 04:00 next day in Kuala Lumpur: a new local day, so the once-per-day review is allowed again.
+    app.now = lambda: datetime(2026, 11, 5, 15, 0)  # 23:00 MYT on 11-05
+    assert app._enqueue_once_per_day("US.MDB", "news", "news_review:US.MDB")
+    app.now = lambda: datetime(2026, 11, 5, 17, 0)  # 01:00 MYT on 11-06, same UTC day
+    assert app._enqueue_once_per_day("US.MDB", "news", "news_review:US.MDB")
