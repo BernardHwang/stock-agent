@@ -34,6 +34,10 @@ describe("quotePost", () => {
     const calls = mockFetch(() => raw('{"s":"ok","d":{}}'));
     await expect(quotePost("tok", "/api/v1.0/accounts/x", {})).rejects.toThrow();
     await expect(quotePost("tok", "/api/v1.0/trade/x", {})).rejects.toThrow();
+    await expect(quotePost("tok", "/api/v1.0/quote/../trd/x", {})).rejects.toThrow();
+    await expect(quotePost("tok", "/api/v1.0/quote/%2e%2e/trd/x", {})).rejects.toThrow();
+    await expect(quotePost("tok", "/api/v1.0/quote/%2E%2E/trd/x", {})).rejects.toThrow();
+    await expect(quotePost("tok", "/api/v1.0/quote/..\\trd/x", {})).rejects.toThrow();
     expect(calls).toEqual([]);
   });
 

@@ -21,8 +21,12 @@ export async function apiGet(token: string, path: string): Promise<unknown> {
 
 /** moomoo serves snapshots and quotes by POST; nothing outside the quote API may be posted to. */
 export async function quotePost(token: string, path: string, body: object): Promise<unknown> {
-  if (!path.startsWith(QUOTE_PREFIX)) throw new Error(`refusing to POST outside ${QUOTE_PREFIX}: ${path}`);
-  const res = await fetch(MOOMOO_API + path, {
+  // Dot-segments ("..", "%2e%2e") or backslashes would let fetch resolve a quote path onto another API.
+  const resolved = new URL(MOOMOO_API + path);
+  if (/\.\.|%2e|\\/i.test(path) || resolved.origin !== MOOMOO_API || !resolved.pathname.startsWith(QUOTE_PREFIX)) {
+    throw new Error(`refusing to POST outside ${QUOTE_PREFIX}`);
+  }
+  const res = await fetch(resolved.href, {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, accept: "application/json", "content-type": "application/json" },
     body: JSON.stringify(body),
