@@ -125,3 +125,60 @@ describe("runMinute", () => {
     expect(positionCalls(calls)).toBe(1);
   });
 });
+
+describe("runMinute robustness", () => {
+  it("counts an empty trading calendar as a failure instead of pausing silently", async () => {
+    const store = await connectedStore();
+    const calls = mockFetch((url) => telegramOk(url) ??
+      (url.includes("/quote/trading-days") ? Response.json({ s: "ok", d: { unexpected: "shape" } }) : undefined));
+    for (let i = 0; i < 3; i++) await runMinute(env, store, plusMin(TUE_OPEN, i));
+    expect(sentTexts(calls)).toEqual(["moomoo is unreachable; stop-loss checks are paused."]);
+    expect(await store.getSetting("trading_days_on")).toBeNull();
+  });
+
+  it("counts a regular-session snapshot with no prices as a failure", async () => {
+    const store = await connectedStore();
+    mockFetch(moomoo(() => null));
+    await runMinute(env, store, TUE_OPEN);
+    expect(await store.getSetting("moomoo_failures")).toBe("1");
+  });
+
+  it("does not claim recovery on a minute that never reached moomoo", async () => {
+    const store = await connectedStore();
+    await store.setSetting("trading_days", JSON.stringify(DAYS));
+    await store.setSetting("trading_days_on", "2026-11-25");
+    const calls = mockFetch((url) => telegramOk(url) ??
+      (url.endsWith("/quote/snapshot") ? new Response("down", { status: 503 }) : undefined));
+    for (let i = 0; i < 3; i++) await runMinute(env, store, at(`2026-11-25T15:0${i}:00Z`)); // Wed, in session
+    await runMinute(env, store, at("2026-11-26T01:30:00Z")); // Wed 20:30 EST, before Thanksgiving: idle
+    expect(sentTexts(calls)).toEqual(["moomoo is unreachable; stop-loss checks are paused."]);
+  });
+
+  it("retries a stop-loss warning that Telegram did not accept", async () => {
+    const store = await connectedStore();
+    let telegramUp = false;
+    const calls = mockFetch((url) => url.startsWith("https://api.telegram.org/")
+      ? (telegramUp ? Response.json({ ok: true }) : new Response("err", { status: 500 }))
+      : moomoo(() => 299)(url));
+    await runMinute(env, store, TUE_OPEN);
+    expect((await store.activePlans())[0]!.fired).toEqual([]);
+    expect(await store.getSetting("moomoo_failures")).toBeNull(); // a Telegram problem is not a moomoo failure
+    telegramUp = true;
+    await runMinute(env, store, plusMin(TUE_OPEN, 1));
+    expect((await store.activePlans())[0]!.fired).toEqual(["SL"]);
+    expect(calls.filter((c) => c.url.includes("/sendMessage"))).toHaveLength(2);
+  });
+
+  it("sends several triggered stops as one message", async () => {
+    const store = await connectedStore();
+    await store.savePlan("US.NVDA", { ...hold, sl: 170 }, "HELD", TUE_OPEN);
+    const calls = mockFetch((url) => telegramOk(url) ?? (url.endsWith("/quote/snapshot")
+      ? Response.json({ s: "ok", d: [{ code: "US.MDB", last_price: 299 }, { code: "US.NVDA", last_price: 160 }] })
+      : moomoo(() => 299)(url)));
+    await runMinute(env, store, plusMin(TUE_OPEN, 1)); // 10:01, not a holdings-sync minute
+    const texts = sentTexts(calls);
+    expect(texts).toHaveLength(1);
+    expect(texts[0]).toContain("US.MDB");
+    expect(texts[0]).toContain("US.NVDA");
+  });
+});

@@ -29,6 +29,17 @@ function nextDate(date: string): string {
   return d.toISOString().slice(0, 10);
 }
 
+export type Session = "overnight" | "pre" | "regular" | "after";
+
+/** Which US trading session the New York clock is in (ignores holidays; pair with the trading calendar). */
+export function marketSession(now: Date): Session {
+  const ny = localParts(now, NY);
+  const minutes = ny.hour * 60 + ny.minute;
+  if (minutes < 4 * 60 || minutes >= 20 * 60) return "overnight";
+  if (minutes < 9 * 60 + 30) return "pre";
+  return minutes < 16 * 60 ? "regular" : "after";
+}
+
 /** US regular session: 09:30 to 16:00 New York time on a trading day. */
 export function inUsSession(now: Date, tradingDays: ReadonlySet<string>): boolean {
   const ny = localParts(now, NY);

@@ -28,17 +28,32 @@ export function splitMessage(text: string, limit = LIMIT): string[] {
 
 /** Message the owner (plain text). Buttons go on the last piece. */
 export async function send(env: Env, text: string, buttons?: Button[][]): Promise<void> {
+  await trySend(env, text, buttons);
+}
+
+/** Like send, but reports whether Telegram accepted every piece; never throws. */
+export async function trySend(env: Env, text: string, buttons?: Button[][]): Promise<boolean> {
   const pieces = splitMessage(text);
+  let delivered = true;
   for (const [i, piece] of pieces.entries()) {
     const body: Record<string, unknown> = { chat_id: env.OWNER_CHAT_ID, text: piece, link_preview_options: { is_disabled: true } };
     if (buttons && i === pieces.length - 1) body.reply_markup = { inline_keyboard: buttons };
-    const res = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) console.error(`telegram sendMessage failed: ${res.status}`); // never log the URL: it holds the token
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        delivered = false;
+        console.error(`telegram sendMessage failed: ${res.status}`); // never log the URL: it holds the token
+      }
+    } catch (e) {
+      delivered = false;
+      console.error("telegram sendMessage failed", e instanceof Error ? e.name : typeof e);
+    }
   }
+  return delivered;
 }
 
 /** Constant-time check of Telegram's webhook secret header. */

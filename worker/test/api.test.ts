@@ -86,12 +86,23 @@ describe("/moomoo probe", () => {
 });
 
 describe("quotes", () => {
+  const OVERNIGHT = new Date("2026-11-24T06:00:00Z"); // 01:00 New York
+  const PRE = new Date("2026-11-24T13:00:00Z"); // 08:00
+  const REGULAR = new Date("2026-11-24T15:00:00Z"); // 10:00
+  const AFTER = new Date("2026-11-24T22:00:00Z"); // 17:00
+
+  it("reads the field of the session the New York clock is in, ignoring stale ones", async () => {
+    const row = { code: "US.MDB", last_price: 317.4, pre_price: 318.2, after_price: 0, overnight_price: 0 };
+    mockFetch(() => raw(JSON.stringify({ s: "ok", d: [row] })));
+    expect((await quotes("tok", ["US.MDB"], REGULAR)).get("US.MDB")).toEqual({ price: 317.4, session: "regular" });
+    expect((await quotes("tok", ["US.MDB"], AFTER)).has("US.MDB")).toBe(false); // no after-hours price: no decision
+  });
   const fixture = async (name: string) => JSON.stringify((await import(`./fixtures/${name}.json`)).default);
 
   it("takes the overnight price when that session is active and skips codes with no price", async () => {
     const body = await fixture("snapshot-overnight");
     const calls = mockFetch(() => raw(body));
-    const out = await quotes("tok", ["US.MDB", "US.NVDA"]);
+    const out = await quotes("tok", ["US.MDB", "US.NVDA"], OVERNIGHT);
     expect(out.get("US.MDB")).toEqual({ price: 312.5, session: "overnight" });
     expect(out.has("US.NVDA")).toBe(false);
     expect(calls).toHaveLength(1);
@@ -101,18 +112,18 @@ describe("quotes", () => {
   it("reads pre-market prices, also from a wrapped list", async () => {
     const body = await fixture("snapshot-pre");
     mockFetch(() => raw(body));
-    expect((await quotes("tok", ["US.MDB"])).get("US.MDB")).toEqual({ price: 318.2, session: "pre" });
+    expect((await quotes("tok", ["US.MDB"], PRE)).get("US.MDB")).toEqual({ price: 318.2, session: "pre" });
   });
 
   it("falls back to the last price in the regular session", async () => {
     const body = await fixture("snapshot-regular");
     mockFetch(() => raw(body));
-    expect((await quotes("tok", ["US.MDB"])).get("US.MDB")).toEqual({ price: 317.4, session: "regular" });
+    expect((await quotes("tok", ["US.MDB"], REGULAR)).get("US.MDB")).toEqual({ price: 317.4, session: "regular" });
   });
 
   it("makes no call for an empty list", async () => {
     const calls = mockFetch(() => raw("{}"));
-    expect((await quotes("tok", [])).size).toBe(0);
+    expect((await quotes("tok", [], REGULAR)).size).toBe(0);
     expect(calls).toEqual([]);
   });
 });

@@ -1,5 +1,6 @@
 /** moomoo HTTP API, read-only: GETs, plus POST to the market-data (quote) endpoints only. */
 import type { Position } from "../store";
+import { marketSession, type Session } from "../time";
 import { MOOMOO_API } from "./oauth";
 
 const QUOTE_PREFIX = "/api/v1.0/quote/";
@@ -34,7 +35,6 @@ export async function quotePost(token: string, path: string, body: object): Prom
   return parse(res, path);
 }
 
-export type Session = "overnight" | "pre" | "regular" | "after";
 export interface Quote {
   price: number;
   session: Session;
@@ -52,28 +52,22 @@ function rowsOf(d: unknown): Record<string, unknown>[] {
 
 const positive = (v: unknown) => (typeof v === "number" && v > 0 ? v : Number(v) > 0 ? Number(v) : null);
 
+const SESSION_FIELD: Record<Session, string> = {
+  overnight: "overnight_price", pre: "pre_price", regular: "last_price", after: "after_price",
+};
+
 /**
- * Current price per code from one snapshot call. moomoo fills overnight_price, pre_price or after_price only while
- * that session runs (0 otherwise), so the first non-zero one is the live session; else last_price (regular).
- * Codes without any positive price are left out.
+ * Current price per code from one snapshot call, read from the field of the session the New York clock is in, so a
+ * stale pre- or after-hours value is never used. Codes without a positive price for that session are left out.
  */
-export async function quotes(token: string, codes: string[]): Promise<Map<string, Quote>> {
+export async function quotes(token: string, codes: string[], now: Date): Promise<Map<string, Quote>> {
   const out = new Map<string, Quote>();
   if (!codes.length) return out;
+  const session = marketSession(now);
   const rows = rowsOf(await quotePost(token, "/api/v1.0/quote/snapshot", { code_list: codes }));
   for (const row of rows) {
-    const code = typeof row.code === "string" ? row.code : null;
-    if (!code) continue;
-    const sessions: [Session, unknown][] = [
-      ["overnight", row.overnight_price], ["pre", row.pre_price], ["after", row.after_price], ["regular", row.last_price],
-    ];
-    for (const [session, value] of sessions) {
-      const price = positive(value);
-      if (price !== null) {
-        out.set(code, { price, session });
-        break;
-      }
-    }
+    const price = positive(row[SESSION_FIELD[session]]);
+    if (typeof row.code === "string" && price !== null) out.set(row.code, { price, session });
   }
   return out;
 }
