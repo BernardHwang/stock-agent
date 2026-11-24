@@ -75,6 +75,7 @@ describe("runAnalysis", () => {
     const texts = sentTexts(sent);
     expect(texts).toHaveLength(1);
     expect(texts[0]).toContain("Buy zone");
+    expect((await store.recentChat(1))[0]).toEqual({ role: "alert", text: texts[0] });
   });
 
   it("does not repeat AI calls or messages when a run is replayed", async () => {

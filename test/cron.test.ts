@@ -62,6 +62,7 @@ describe("runMinute", () => {
     await runMinute(env, store, plusMin(TUE_OPEN, 1));
     const warnings = sentTexts(calls).filter((t) => t.includes("Stop-loss"));
     expect(warnings).toEqual(["⚠️ Stop-loss: US.MDB at 299.00 (stop 300.00, regular trading). Review this position."]);
+    expect((await store.recentChat(1))[0]).toEqual({ role: "alert", text: warnings[0] });
   });
 
   it("stays quiet above the stop", async () => {

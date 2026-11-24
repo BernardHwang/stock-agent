@@ -1,0 +1,7 @@
+CREATE TABLE chat_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  role TEXT NOT NULL,
+  text TEXT NOT NULL,
+  at TEXT NOT NULL
+);
+CREATE INDEX chat_log_at ON chat_log (at);

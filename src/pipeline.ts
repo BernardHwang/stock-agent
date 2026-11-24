@@ -89,6 +89,7 @@ export async function runAnalysis(step: Step, env: Env, store: Store, item: Queu
     }
     await store.setQueueStatus(item.id, "done");
     await send(env, message);
+    await store.logChat("alert", message, now); // so the chat knows what it told you
     return true;
   });
 }

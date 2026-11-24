@@ -33,6 +33,7 @@ const toPlan = (r: PlanRow): Plan => ({
 });
 
 export type QueueStatus = "pending" | "running" | "done" | "failed";
+export type ChatRole = "user" | "bot" | "alert";
 
 export interface QueueItem {
   id: number;
@@ -184,6 +185,27 @@ export class Store {
     const [start, end] = localDayBounds(day, tz);
     const row = await this.db.prepare("SELECT COUNT(*) AS n FROM runs WHERE at >= ? AND at < ?").bind(start, end)
       .first<{ n: number }>();
+    return row?.n ?? 0;
+  }
+
+  // Chat log (context for the chat, and the daily chat limit)
+
+  async logChat(role: ChatRole, text: string, at: Date): Promise<void> {
+    await this.db.prepare("INSERT INTO chat_log (role, text, at) VALUES (?, ?, ?)").bind(role, text, at.toISOString()).run();
+  }
+
+  /** The last ``limit`` entries, oldest first. */
+  async recentChat(limit: number): Promise<{ role: ChatRole; text: string }[]> {
+    const { results } = await this.db.prepare("SELECT role, text FROM chat_log ORDER BY id DESC LIMIT ?").bind(limit)
+      .all<{ role: ChatRole; text: string }>();
+    return results.reverse();
+  }
+
+  /** Messages the owner sent during the local day ``day`` in ``tz``. */
+  async countChatOn(day: string, tz: string): Promise<number> {
+    const [start, end] = localDayBounds(day, tz);
+    const row = await this.db.prepare("SELECT COUNT(*) AS n FROM chat_log WHERE role = 'user' AND at >= ? AND at < ?")
+      .bind(start, end).first<{ n: number }>();
     return row?.n ?? 0;
   }
 

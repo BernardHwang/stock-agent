@@ -4,7 +4,7 @@ import type { Store } from "./store";
 export type Button = { text: string; url: string };
 
 export interface Update {
-  message?: { chat: { id: number }; from?: { id: number }; text?: string };
+  message?: { chat: { id: number }; from?: { id: number }; text?: string; reply_to_message?: { text?: string } };
 }
 
 const LIMIT = 4000;

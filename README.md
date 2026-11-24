@@ -1,25 +1,49 @@
 # stock-agent
 
 A personal, **alert-only** stock agent that runs as a free Cloudflare Worker.
-It reads your moomoo account **read-only** over moomoo's web API, keeps holdings in D1, and sends a Telegram
-**stop-loss warning** when a held position trades at or below its stop. That covers 24 hours on US trading days
-(overnight, pre-market, regular, after-hours), or regular hours only with `PRICE_HOURS="regular"`.
+It reads your moomoo account **read-only** over moomoo's web API, analyses stocks with a TradingAgents-style
+team of AI roles, saves a plan (buy zone, take-profit, stop-loss) and sends a Telegram **stop-loss warning** when
+a held position trades at or below its stop. That covers 24 hours on US trading days (overnight, pre-market,
+regular, after-hours), or regular hours only with `PRICE_HOURS="regular"`. You talk to it in plain language.
 
-Built so far: the platform, the moomoo link, holdings sync and the stop-loss warning.
-Still to come: analysis, chat and briefs. Until then, plans only come from tests or the D1 console.
-The earlier Python version (TradingAgents analysis, chat, briefs on a VM with OpenD) is in git history at
-commit `9c81be3`; those features are being ported from it. `config/universe.yaml` and `config/screener.yaml`
-are its screener inputs, kept for the coming screener.
+Still to come: daily briefs, event notes, plan outcomes and lessons. The earlier Python version is in git history
+at commit `9c81be3`; `config/universe.yaml` and `config/screener.yaml` are its screener inputs, kept for the
+coming screener.
 
 > Informational only, not financial advice.
 
 **It never trades.** A grant that includes `trade:write` is thrown away. The code only sends GETs to moomoo,
 plus POSTs to the market-data (`/api/v1.0/quote/`) endpoints. `test/safety.test.ts` fails if that changes.
 
+## Chat
+
+Write to the bot in plain language; it uses read-only tools on your holdings, plans, reports, quotes and news:
+
+- "analyze MDB": queues a full analysis; the plan arrives as its own message a few minutes later.
+- "what's my plan for NVDA?", "how are my holdings?", "any news on SPCX?", "show all my plans".
+- Reply to one of the bot's messages (e.g. a stop-loss warning) to ask about it.
+
+## Analysis
+
+Each analysis is a Cloudflare Workflow, one at a time from a queue:
+
+1. **Verified data sheet**, built in code: 370 daily candles from moomoo with SMA 20/50/200, RSI, MACD,
+   Bollinger bands and ATR; valuation, key financial ratios, PE percentile, analyst consensus and short interest
+   from moomoo; headlines from Yahoo (the analysis still runs if Yahoo is unreachable).
+2. **11 roles, one AI call each**: market, news and fundamentals analysts; bull and bear; research manager;
+   trader; aggressive, neutral and conservative risk; portfolio manager (writes the plan as JSON). Instructions
+   live in `skills/*.md`, adapted from TradingAgents v0.7.1 (Apache-2.0; see `skills/NOTICE.md`).
+3. **Checks**: the plan must pass the same rules as before (levels in order, stop below the price, buy zone
+   within -25%/+10% of the price); one retry with the reasons, otherwise no plan is saved and you're told why.
+
+Triggers: chat ("analyze X"), a newly found holding, and a review of every holding on Monday 20:00 Malaysia time.
+Limits (vars in `wrangler.jsonc`): `MAX_RUNS_PER_DAY` (3) and `CHAT_MAX_PER_DAY` (30); both stop politely above
+9,000 estimated neurons today, and analyses pause 30 minutes after Workers AI refuses for capacity.
+Models: `QUICK_MODEL` (Llama 4 Scout) for analysts and debaters, `DEEP_MODEL` (Llama 3.3 70B) for the manager,
+trader, portfolio manager and chat.
+
 ## Telegram commands
 
-| Command | What it does |
-|---|---|
 All of these are in Telegram's "/" menu; `/help` also lists what runs automatically.
 
 | Command | What it does |
@@ -63,6 +87,11 @@ For `npx wrangler dev`, copy `.dev.vars.example` to
 |---|---|
 | `src/index.ts` | Routes (`/health`, `/telegram`, `/moomoo/callback`) and the per-minute cron |
 | `src/setup.ts` | Self-setup after a deploy: Telegram webhook, command menu, moomoo client |
+| `src/chat/` | Chat: tools (`tools.ts`) and the turn engine (`engine.ts`) |
+| `src/workflow.ts`, `src/pipeline.ts` | Analysis queue and Workflow; the 11-role pipeline |
+| `src/datasheet.ts`, `src/indicators.ts`, `src/moomoo/research.ts`, `src/news.ts` | The verified data sheet |
+| `src/ai.ts`, `src/extract.ts`, `src/lifecycle.ts`, `src/messages.ts` | AI calls and neuron tally; plan parsing, saving and messages |
+| `skills/` | Role instructions (adapted from TradingAgents) |
 | `src/commands.ts` | Telegram commands |
 | `src/moomoo/` | OAuth (`oauth.ts`) and the read-only API client (`api.ts`) |
 | `src/holdings.ts`, `src/cron.ts` | Holdings sync; calendar, stop-loss checks and failure notes |

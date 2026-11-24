@@ -52,10 +52,12 @@ async function findStops(store: Store, token: string, now: Date, regular: boolea
 }
 
 /** One message for all triggered stops; plans are marked fired only once Telegram accepted it. */
-async function warn(env: Env, store: Store, triggers: Trigger[]): Promise<void> {
+async function warn(env: Env, store: Store, triggers: Trigger[], now: Date): Promise<void> {
   const lines = triggers.map(({ plan, quote }) => `⚠️ Stop-loss: ${plan.code} at ${quote.price.toFixed(2)} ` +
     `(stop ${plan.sl!.toFixed(2)}, ${SESSION_LABEL[quote.session]} trading). Review this position.`);
-  if (!(await trySend(env, lines.join("\n")))) return; // retried next minute
+  const text = lines.join("\n");
+  if (!(await trySend(env, text))) return; // retried next minute
+  await store.logChat("alert", text, now); // so the chat knows what it told you
   for (const { plan } of triggers) await store.updatePlan({ ...plan, fired: [...plan.fired, "SL"] });
 }
 
@@ -103,5 +105,5 @@ export async function runMinute(env: Env, store: Store, now: Date): Promise<void
   }
   if (contacted) await succeeded(env, store);
   if (syncMessages.length) await send(env, syncMessages.join("\n\n"));
-  if (triggers.length) await warn(env, store, triggers);
+  if (triggers.length) await warn(env, store, triggers, now);
 }

@@ -1,10 +1,11 @@
 import { aiProbe, DEFAULT_MODEL, estimateNeurons } from "./aiprobe";
+import { chatReply } from "./chat/engine";
 import type { Env } from "./env";
 import { syncFromMoomoo } from "./holdings";
 import { apiGet, quotePost } from "./moomoo/api";
 import { accessToken, clientId, connectUrl, disconnect } from "./moomoo/oauth";
 import type { Store } from "./store";
-import { send, type Update } from "./telegram";
+import { send, telegramApi, type Update } from "./telegram";
 import { inPriceWindow, inUsSession } from "./time";
 
 /** Telegram's "/" menu, in order. Menu entries can't take arguments, so every feature is its own command. */
@@ -21,6 +22,11 @@ export const COMMANDS: [name: string, description: string][] = [
 ];
 
 const HELP = [
+  "Chat (just write to me)",
+  "\"analyze MDB\" - a full multi-analyst analysis ending in a plan (buy zone, take-profit, stop-loss), sent in a few minutes",
+  "\"what's my plan for NVDA?\", \"how are my holdings?\", \"any news on SPCX?\", \"show all my plans\"",
+  "Reply to one of my messages to ask about it.",
+  "",
   "Portfolio",
   "/holdings - your positions from the last sync",
   "/sync - sync positions from moomoo now",
@@ -39,14 +45,16 @@ const HELP = [
   "Stop-loss warning - every minute on US trading days (24h incl. pre-market, after-hours and overnight), once per plan",
   "Holdings sync - every 15 min in US market hours, and 07:55 Malaysia time",
   "moomoo problems - one note after 3 failed minutes, one when it recovers",
+  "New holdings get an analysis; every holding is reviewed Monday 20:00 Malaysia time",
+  "",
+  "Limits: 3 analyses and 30 chat messages a day, within the free 10,000 AI neurons",
   "",
   "/help - this guide (the \"/\" menu lists every command)",
   "",
-  "Coming next: analysis (plans with buy zone, target and stop), chat, daily briefs.",
+  "Coming next: daily briefs.",
 ].join("\n");
 
 const UNKNOWN = "Unknown command. Send /help.";
-const NOT_A_COMMAND = "I only understand commands for now; chat is coming. Send /help to see them.";
 
 async function aiTest(env: Env, model: string): Promise<void> {
   try {
@@ -63,7 +71,10 @@ async function aiTest(env: Env, model: string): Promise<void> {
 export async function handleUpdate(env: Env, store: Store, update: unknown, now: Date, origin: string): Promise<void> {
   const msg = (update as Update).message;
   if (!msg || String(msg.chat.id) !== env.OWNER_CHAT_ID || !msg.text) return;
-  if (!msg.text.startsWith("/")) return send(env, NOT_A_COMMAND);
+  if (!msg.text.startsWith("/")) {
+    await telegramApi(env, "sendChatAction", { chat_id: env.OWNER_CHAT_ID, action: "typing" });
+    return send(env, await chatReply(env, store, msg.text, msg.reply_to_message?.text ?? null, now));
+  }
   const [head = "", ...args] = msg.text.trim().split(/\s+/);
   const name = head.slice(1).split("@")[0]!.toLowerCase();
   switch (name) {
