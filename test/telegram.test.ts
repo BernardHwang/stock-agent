@@ -36,6 +36,12 @@ describe("commands", () => {
     for (const [name] of COMMANDS) expect(text).toContain(`/${name}`);
   });
 
+  it("answers plain text with a pointer to the commands until chat exists", async () => {
+    const calls = mockFetch(telegramOk);
+    await handleUpdate(env, new Store(env.DB), update("hi"), NOW, "https://worker.test");
+    expect(sentTexts(calls)).toEqual(["I only understand commands for now; chat is coming. Send /help to see them."]);
+  });
+
   it("answers an unknown command", async () => {
     const calls = mockFetch(telegramOk);
     await handleUpdate(env, new Store(env.DB), update("/foo"), NOW, "https://worker.test");

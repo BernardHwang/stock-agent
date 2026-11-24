@@ -17,6 +17,7 @@ export const COMMANDS: [name: string, description: string][] = [
 ];
 
 const UNKNOWN = "Unknown command. Send /help.";
+const NOT_A_COMMAND = "I only understand commands for now; chat is coming. Send /help to see them.";
 
 async function aiTest(env: Env, model: string): Promise<void> {
   try {
@@ -32,7 +33,8 @@ async function aiTest(env: Env, model: string): Promise<void> {
 
 export async function handleUpdate(env: Env, store: Store, update: unknown, now: Date, origin: string): Promise<void> {
   const msg = (update as Update).message;
-  if (!msg || String(msg.chat.id) !== env.OWNER_CHAT_ID || !msg.text?.startsWith("/")) return;
+  if (!msg || String(msg.chat.id) !== env.OWNER_CHAT_ID || !msg.text) return;
+  if (!msg.text.startsWith("/")) return send(env, NOT_A_COMMAND);
   const [head = "", ...args] = msg.text.trim().split(/\s+/);
   const name = head.slice(1).split("@")[0]!.toLowerCase();
   switch (name) {
