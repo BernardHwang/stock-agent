@@ -7,3 +7,6 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 docs/superpowers/
+worker/node_modules/
+worker/.wrangler/
+worker/.dev.vars

@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "stock-agent",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "triggers": { "crons": ["* * * * *"] },
+  "d1_databases": [
+    // database_id is filled in after `wrangler d1 create stock-agent`.
+    { "binding": "DB", "database_name": "stock-agent", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }
+  ],
+  "ai": { "binding": "AI" },
+  "vars": { "OWNER_TZ": "Asia/Kuala_Lumpur", "PRICE_HOURS": "24h" }
+  // Secrets (wrangler secret put): TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, OWNER_CHAT_ID, MOOMOO_CLIENT_ID
+}
