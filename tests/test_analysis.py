@@ -69,6 +69,21 @@ async def test_invalid_plan_not_saved_owner_told(store):
     assert len(sent) == 1 and "inconsistent levels" in sent[0]
 
 
+async def test_invalid_plan_retried_once_with_the_errors(store):
+    store.enqueue("US.NVDA", "weekly", 3, NOW)
+    reports: list[str] = []
+
+    def extract(report, code, held, s):
+        reports.append(report)
+        return buy(sl=101) if len(reports) == 1 else buy()
+
+    w, sent = make(store, extract=extract)
+    await w.drain()
+    assert store.active_plan("US.NVDA").state == PlanState.OPEN
+    assert len(reports) == 2 and "sl must be below the entry zone" in reports[1]
+    assert len(sent) == 1 and "inconsistent" not in sent[0]
+
+
 async def test_rate_limit_requeues_and_alerts_once(store):
     store.enqueue("US.A", "weekly", 3, NOW)
     store.enqueue("US.B", "weekly", 3, NOW)

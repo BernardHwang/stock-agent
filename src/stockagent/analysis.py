@@ -234,6 +234,14 @@ def extract_plan(report: str, code: str, held: Position | None, settings: Settin
     return parse_plan_json(str(content))
 
 
+RETRY_NOTE = ("\n\n## Correction needed\nYour previous plan was rejected: {errors}. Return a corrected plan that "
+              "follows every rule; for HOLD or TRIM give both tp and sl.")
+
+
+def _plan_errors(fields: PlanFields, price: float | None) -> list[str]:
+    return validate_fields(fields) or validate_against_price(fields, price)
+
+
 class SavedReport(BaseModel):
     at: datetime
     text: str
@@ -322,8 +330,19 @@ class AnalysisWorker:
 
         if self.health.resolved("ai_quota"):
             await self.notify(format_info("AI quota available again."))
+        errors = _plan_errors(fields, price)
+        if errors:
+            # One extraction call is cheap next to the analysis it would otherwise throw away.
+            log.info("plan for %s rejected (%s); retrying extraction once", code, errors)
+            retry_report = report + RETRY_NOTE.format(errors="; ".join(errors))
+            try:
+                retried = await asyncio.to_thread(self.extract, retry_report, code, held, self.settings)
+            except Exception:
+                log.warning("retrying the plan extraction failed for %s", code, exc_info=True)
+            else:
+                if not _plan_errors(retried, price):
+                    fields, errors = retried, []
         try:
-            errors = validate_fields(fields) or validate_against_price(fields, price)
             if errors:
                 log.warning("invalid plan for %s: %s", code, errors)
                 self.store.finish_queue_item(item_id, "done")
