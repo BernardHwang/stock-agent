@@ -67,8 +67,8 @@ export function validateAgainstPrice(f: PlanFields, price: number | null): strin
   if (f.sl !== null && f.sl >= price) {
     errors.push(`stop loss ${f.sl.toFixed(2)} is at or above the current price ${price.toFixed(2)}`);
   }
-  // BUY only: for a HOLD/TRIM on a winner, a target already reached is valid advice.
-  if (f.action === "BUY" && f.tp !== null && f.tp <= price) {
+  // Not TRIM: "trim now, the target is reached" is valid advice; a HOLD toward a target already passed is not.
+  if ((f.action === "BUY" || f.action === "HOLD") && f.tp !== null && f.tp <= price) {
     errors.push(`take-profit ${f.tp.toFixed(2)} is at or below the current price ${price.toFixed(2)}`);
   }
   if (f.action === "BUY" && f.entryLow !== null && f.entryHigh !== null) {

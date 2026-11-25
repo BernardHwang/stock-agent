@@ -86,7 +86,7 @@ export async function runAnalysis(step: Step, env: Env, store: Store, item: Queu
     let message: string;
     if ("fields" in outcome) {
       const plan = await applyNewAnalysis(store, code, outcome.fields, Boolean(position), now);
-      message = plan ? formatPlan(plan, sheet.price) : formatNoPlan(code, outcome.fields);
+      message = plan ? formatPlan(plan, sheet.price, position?.avgCost ?? null) : formatNoPlan(code, outcome.fields);
     } else {
       message = formatInvalidPlan(code, outcome.errors);
     }

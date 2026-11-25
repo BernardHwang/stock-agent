@@ -9,6 +9,26 @@ export interface Update {
 }
 
 const LIMIT = 4000;
+const SOURCE_LIMIT = 3500; // pieces are split before HTML escaping, which lengthens them
+
+const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+/**
+ * Light markdown (**bold**, `code`, # headings, * or - bullets) to Telegram HTML; everything else is escaped.
+ * Line by line, so a piece split at line breaks never leaves a tag open.
+ */
+export function toTelegramHtml(text: string): string {
+  return text.split("\n").map((line) => {
+    const heading = line.match(/^#{1,6}\s+(.*)$/);
+    if (heading) return `<b>${escapeHtml(heading[1]!.replace(/\*\*/g, ""))}</b>`;
+    const bullet = line.replace(/^(\s*)[*-]\s+/, "$1• ");
+    return bullet.split("`").map((part, i, all) => {
+      if (i % 2 === 1 && i < all.length - 1) return `<code>${escapeHtml(part)}</code>`;
+      const text = escapeHtml(i % 2 === 1 ? `\`${part}` : part); // an unpaired backtick stays literal
+      return text.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+    }).join("");
+  }).join("\n");
+}
 
 /** Split at line breaks into Telegram-sized pieces; a single over-long line is hard-cut. */
 export function splitMessage(text: string, limit = LIMIT): string[] {
@@ -28,31 +48,37 @@ export function splitMessage(text: string, limit = LIMIT): string[] {
   return out;
 }
 
-/** Message the owner (plain text). Buttons go on the last piece. */
+/** Message the owner; light markdown renders as HTML (see toTelegramHtml). Buttons go on the last piece. */
 export async function send(env: Env, text: string, buttons?: Button[][]): Promise<void> {
   await trySend(env, text, buttons);
 }
 
+async function sendPiece(env: Env, body: Record<string, unknown>): Promise<Response | null> {
+  try {
+    return await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (e) {
+    console.error("telegram sendMessage failed", e instanceof Error ? e.name : typeof e);
+    return null;
+  }
+}
+
 /** Like send, but reports whether Telegram accepted every piece; never throws. */
 export async function trySend(env: Env, text: string, buttons?: Button[][]): Promise<boolean> {
-  const pieces = splitMessage(text);
+  const pieces = splitMessage(text, SOURCE_LIMIT);
   let delivered = true;
   for (const [i, piece] of pieces.entries()) {
-    const body: Record<string, unknown> = { chat_id: env.OWNER_CHAT_ID, text: piece, link_preview_options: { is_disabled: true } };
-    if (buttons && i === pieces.length - 1) body.reply_markup = { inline_keyboard: buttons };
-    try {
-      const res = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        delivered = false;
-        console.error(`telegram sendMessage failed: ${res.status}`); // never log the URL: it holds the token
-      }
-    } catch (e) {
+    const base: Record<string, unknown> = { chat_id: env.OWNER_CHAT_ID, link_preview_options: { is_disabled: true } };
+    if (buttons && i === pieces.length - 1) base.reply_markup = { inline_keyboard: buttons };
+    let res = await sendPiece(env, { ...base, text: toTelegramHtml(piece), parse_mode: "HTML" });
+    // 400 is Telegram refusing the HTML (e.g. "can't parse entities"): the plain text still gets through.
+    if (res?.status === 400) res = await sendPiece(env, { ...base, text: piece });
+    if (!res?.ok) {
       delivered = false;
-      console.error("telegram sendMessage failed", e instanceof Error ? e.name : typeof e);
+      if (res) console.error(`telegram sendMessage failed: ${res.status}`); // never log the URL: it holds the token
     }
   }
   return delivered;

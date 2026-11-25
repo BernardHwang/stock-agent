@@ -8,7 +8,11 @@ Rules:
 - BUY: a buy zone (entry_low to entry_high) near current support or the current price, a stop-loss below a
   meaningful support (usually 8-15% below entry), a take-profit sized for at least 20% upside, and optionally a
   partial take-profit in between.
-- HOLD or TRIM: give both tp and sl, set relative to the current price. EXIT may leave the levels empty.
+- HOLD or TRIM: give both tp and sl, grounded in the current price structure. A HOLD's tp must be above the
+  current price. EXIT may leave the levels empty.
+- When the investor holds the stock, weigh their average cost. If your tp is below their average cost, say so
+  plainly in the reasoning (selling there locks in a loss) and explain why it is still the right level, e.g. a
+  recovery trim at resistance. Never quietly set a tp under their cost.
 - If the evidence does not support buying, do not force it: answer HOLD with low confidence and explain why
   waiting or passing is smarter.
 - Every price must come from the data sheet's numbers or follow directly from them. If a role quoted a different

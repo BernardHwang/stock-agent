@@ -3,7 +3,8 @@ import { exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { COMMANDS, handleUpdate } from "../src/commands";
 import { Store } from "../src/store";
-import { mockFetch, sentTexts, telegramOk } from "./helpers";
+import { json, mockFetch, sentTexts, telegramOk } from "./helpers";
+import { toTelegramHtml, trySend } from "../src/telegram";
 
 const NOW = new Date("2026-11-24T03:00:00Z");
 const update = (text: string, chatId = 1001) => ({ message: { chat: { id: chatId }, from: { id: chatId }, text } });
@@ -99,5 +100,35 @@ describe("commands", () => {
     const texts = sentTexts(calls);
     expect(texts.length).toBeGreaterThan(1);
     for (const t of texts) expect(t.length).toBeLessThanOrEqual(4000);
+  });
+});
+
+describe("HTML rendering", () => {
+  it("turns light markdown into Telegram HTML and escapes the rest", () => {
+    expect(toTelegramHtml("## Plan\n**Bold** & <tag> `a<b` 3*4\n* one\n- two")).toBe(
+      "<b>Plan</b>\n<b>Bold</b> &amp; &lt;tag&gt; <code>a&lt;b</code> 3*4\n• one\n• two");
+  });
+
+  it("does not format inside code", () =>
+    expect(toTelegramHtml("`**x**` **y**")).toBe("<code>**x**</code> <b>y</b>"));
+
+  it("sends with parse_mode HTML", async () => {
+    const calls = mockFetch(telegramOk);
+    await trySend(env, "**hi** <there>");
+    const body = JSON.parse(calls[0]!.body);
+    expect(body).toMatchObject({ text: "<b>hi</b> &lt;there&gt;", parse_mode: "HTML" });
+  });
+
+  it("falls back to plain text when Telegram rejects the HTML", async () => {
+    let first = true;
+    const calls = mockFetch((url) => {
+      if (!url.startsWith("https://api.telegram.org/")) return undefined;
+      if (first) return (first = false), json({ ok: false, description: "can't parse entities" }, 400);
+      return json({ ok: true });
+    });
+    expect(await trySend(env, "**hi**")).toBe(true);
+    const retry = JSON.parse(calls[1]!.body);
+    expect(retry.text).toBe("**hi**");
+    expect(retry.parse_mode).toBeUndefined();
   });
 });

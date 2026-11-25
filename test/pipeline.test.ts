@@ -75,7 +75,9 @@ describe("runAnalysis", () => {
     const texts = sentTexts(sent);
     expect(texts).toHaveLength(1);
     expect(texts[0]).toContain("Buy zone");
-    expect((await store.recentChat(1))[0]).toEqual({ role: "alert", text: texts[0] });
+    const logged = (await store.recentChat(1))[0]!; // the markdown source, so the chat model never sees HTML
+    expect(logged.role).toBe("alert");
+    expect(logged.text.replace(/\*\*/g, "")).toBe(texts[0]);
   });
 
   it("does not repeat AI calls or messages when a run is replayed", async () => {
@@ -101,9 +103,10 @@ describe("runAnalysis", () => {
   it("tells the portfolio manager when the investor already holds the stock", async () => {
     const { store, item, calls, e, deps } = await setup(goodPlan);
     await store.savePositions([{ code: "US.MDB", name: "MongoDB", qty: 7, avgCost: 358.09 }], NOW);
-    mockFetch(telegramOk);
+    const sent = mockFetch(telegramOk);
     await runAnalysis(fakeStep(), e, store, item, NOW, deps);
     expect(calls.at(-1)!.user).toContain("holds 7 shares at an average cost of 358.09");
+    expect(sentTexts(sent)[0]).toContain("Take-profit: 390.00 (+23.4% vs now, +8.9% vs your cost)");
     expect(await store.planFor("US.MDB")).toMatchObject({ state: "HELD", action: "HOLD" });
   });
 });

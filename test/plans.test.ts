@@ -52,5 +52,10 @@ describe("validateAgainstPrice", () => {
     const trim: PlanFields = { ...buy(), ...none, action: "TRIM", tp: 300, sl: 250 };
     expect(validateAgainstPrice(trim, 316)).toEqual([]);
   });
+  it("rejects a hold whose take-profit is at or below the live price", () => {
+    const hold: PlanFields = { ...buy(), ...none, action: "HOLD", tp: 300, sl: 250 };
+    expect(validateAgainstPrice(hold, 316).some((e) => e.includes("take-profit"))).toBe(true);
+    expect(validateAgainstPrice({ ...hold, tp: 340 }, 316)).toEqual([]);
+  });
   it("skips the checks without a live price", () => expect(validateAgainstPrice(big(), null)).toEqual([]));
 });

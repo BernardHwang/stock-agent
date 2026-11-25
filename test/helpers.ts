@@ -20,8 +20,12 @@ export function mockFetch(route: (url: string, init: RequestInit) => Response | 
 export const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
-/** Telegram texts sent by the bot, in order. */
+/** Telegram texts sent by the bot, in order, as the reader sees them (HTML tags and escapes removed). */
 export const sentTexts = (calls: Call[]) =>
-  calls.filter((c) => c.url.includes("/sendMessage")).map((c) => JSON.parse(c.body).text as string);
+  calls.filter((c) => c.url.includes("/sendMessage")).map((c) => {
+    const body = JSON.parse(c.body) as { text: string; parse_mode?: string };
+    if (body.parse_mode !== "HTML") return body.text;
+    return body.text.replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+  });
 
 export const telegramOk = (url: string) => (url.startsWith("https://api.telegram.org/") ? json({ ok: true }) : undefined);
