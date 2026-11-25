@@ -148,3 +148,21 @@ describe("chat safety limits", () => {
     expect(ai).toHaveLength(1);
   });
 });
+
+describe("chat with tool calls written as text", () => {
+  it("runs the tool and answers, instead of sending the raw JSON", async () => {
+    const store = new Store(env.DB);
+    await store.savePositions([{ code: "US.MDB", name: "MongoDB", qty: 7, avgCost: 358.09 }], NOW);
+    mockFetch(() => undefined);
+    const { e, calls } = scripted('{"type":"function","function":{"name":"get_holdings","parameters":{}}}', "You hold 7 MDB at 358.09.");
+    expect(await chatReply(e, store, "how are my holdings?", null, NOW)).toBe("You hold 7 MDB at 358.09.");
+    expect(calls[1]!.messages.at(-1)!.content).toContain("get_holdings");
+    expect(calls[1]!.messages.at(-1)!.content).toContain("US.MDB");
+  });
+
+  it("never sends a tool request as the final answer", async () => {
+    const { e } = scripted({ tool: "list_plans" }, { tool: "list_plans" }, { tool: "list_plans" }, { tool: "list_plans" },
+      '{"type":"function","function":{"name":"list_plans","parameters":{}}}');
+    expect(await chatReply(e, new Store(env.DB), "plans?", null, NOW)).toBe(FALLBACK);
+  });
+});

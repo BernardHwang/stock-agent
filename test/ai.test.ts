@@ -52,3 +52,45 @@ describe("askWithTools", () => {
     expect(out).toEqual({ text: "", toolCalls: [{ name: "get_quote", arguments: { ticker: "MDB" } }, { name: "list_plans", arguments: {} }] });
   });
 });
+
+describe("askWithTools: tool calls written as text", () => {
+  const tools = [
+    { name: "get_holdings", description: "d", parameters: { type: "object" as const, properties: {} } },
+    { name: "get_plan", description: "d", parameters: { type: "object" as const, properties: {} } },
+  ];
+  const textAnswer = (response: string) => withAi(async () => ({ response, usage: {} }));
+
+  it("reads Llama's nested form as a tool call (the live Telegram case)", async () => {
+    const e = textAnswer('{"type":"function","function":{"name":"get_plan","parameters":{"ticker":"US.MDB"}}}');
+    expect(await askWithTools(e, new Store(env.DB), DEEP, [], tools, 100, NOW))
+      .toEqual({ text: "", toolCalls: [{ name: "get_plan", arguments: { ticker: "US.MDB" } }] });
+  });
+
+  it("reads the flat form, arguments, a list, and several calls separated by semicolons", async () => {
+    for (const response of [
+      '{"name":"get_holdings","parameters":{}}',
+      '{"name":"get_holdings","arguments":"{}"}',
+      '[{"name":"get_holdings","parameters":{}}]',
+      '<|python_tag|>{"name":"get_holdings","parameters":{}}',
+    ]) {
+      const out = await askWithTools(textAnswer(response), new Store(env.DB), DEEP, [], tools, 100, NOW);
+      expect(out.toolCalls, response).toEqual([{ name: "get_holdings", arguments: {} }]);
+      expect(out.text).toBe("");
+    }
+    const two = await askWithTools(textAnswer('{"name":"get_holdings","parameters":{}}; {"name":"get_plan","parameters":{"ticker":"MDB"}}'),
+      new Store(env.DB), DEEP, [], tools, 100, NOW);
+    expect(two.toolCalls.map((c) => c.name)).toEqual(["get_holdings", "get_plan"]);
+  });
+
+  it("leaves real answers alone, including JSON that isn't one of its tools", async () => {
+    for (const response of ["Your MDB plan is a HOLD.", '{"name":"place_order","parameters":{}}', '{"answer": 42}']) {
+      const out = await askWithTools(textAnswer(response), new Store(env.DB), DEEP, [], tools, 100, NOW);
+      expect(out).toEqual({ text: response, toolCalls: [] });
+    }
+  });
+
+  it("does not look for text tool calls when no tools were offered", async () => {
+    const out = await askWithTools(textAnswer('{"name":"get_holdings","parameters":{}}'), new Store(env.DB), DEEP, [], [], 100, NOW);
+    expect(out.toolCalls).toEqual([]);
+  });
+});

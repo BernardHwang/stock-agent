@@ -72,7 +72,68 @@ export async function askWithTools(env: Env, store: Store, model: string, messag
   const calls = ((out.tool_calls as { name?: unknown; arguments?: unknown }[] | undefined) ?? [])
     .filter((c) => typeof c.name === "string")
     .map((c) => ({ name: String(c.name), arguments: parseArgs(c.arguments) }));
-  return { text: textOf(out.response).trim(), toolCalls: calls };
+  const text = textOf(out.response).trim();
+  if (!calls.length && tools.length) {
+    // Llama sometimes writes its tool call as text that Workers AI doesn't lift into tool_calls.
+    const fromText = textToolCalls(text, tools.map((t) => t.name));
+    if (fromText.length) return { text: "", toolCalls: fromText };
+  }
+  return { text, toolCalls: calls };
+}
+
+/** Top-level JSON values in ``text``, or null when anything else (prose) is in it. */
+function jsonValues(text: string): unknown[] | null {
+  const values: unknown[] = [];
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i]!;
+    if (/[\s;,]/.test(c)) {
+      i++;
+      continue;
+    }
+    if (c !== "{" && c !== "[") return null;
+    let depth = 0;
+    let inString = false;
+    let j = i;
+    for (; j < text.length; j++) {
+      const ch = text[j]!;
+      if (inString) {
+        if (ch === "\\") j++;
+        else if (ch === "\"") inString = false;
+      } else if (ch === "\"") inString = true;
+      else if (ch === "{" || ch === "[") depth++;
+      else if (ch === "}" || ch === "]") {
+        depth--;
+        if (depth === 0) break;
+      }
+    }
+    try {
+      values.push(JSON.parse(text.slice(i, j + 1)));
+    } catch {
+      return null;
+    }
+    i = j + 1;
+  }
+  return values;
+}
+
+/**
+ * Tool calls written as text, in Llama's forms: {"type":"function","function":{"name","parameters"}},
+ * {"name","parameters"|"arguments"}, a list of those, or several separated by ";". Only when the whole text is
+ * such calls and every name is one of ``names``; otherwise it is an answer and [] is returned.
+ */
+export function textToolCalls(text: string, names: string[]): ToolCall[] {
+  const values = jsonValues(text.replace(/<\|python_tag\|>/g, "").trim());
+  if (!values?.length) return [];
+  const calls: ToolCall[] = [];
+  for (const item of values.flatMap((v) => (Array.isArray(v) ? v : [v]))) {
+    if (!item || typeof item !== "object") return [];
+    const o = item as Record<string, unknown>;
+    const f = (o.function && typeof o.function === "object" ? o.function : o) as Record<string, unknown>;
+    if (typeof f.name !== "string" || !names.includes(f.name)) return [];
+    calls.push({ name: f.name, arguments: parseArgs(f.parameters ?? f.arguments) });
+  }
+  return calls;
 }
 
 function parseArgs(raw: unknown): Record<string, unknown> {

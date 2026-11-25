@@ -1,5 +1,5 @@
 /** One chat turn: recent history, tools (at most 4 rounds), then an answer. Never silent, never over budget. */
-import { AiRateLimited, askWithTools, type ChatMessage, neuronsToday } from "../ai";
+import { AiRateLimited, askWithTools, type ChatMessage, neuronsToday, textToolCalls } from "../ai";
 import type { Env } from "../env";
 import { DEFAULT_DEEP_MODEL } from "../pipeline";
 import type { Store } from "../store";
@@ -75,6 +75,8 @@ export async function chatReply(env: Env, store: Store, text: string, quoted: st
     console.error("chat failed", e instanceof Error ? e.name : typeof e);
     return `Sorry, that didn't work (${e instanceof Error ? e.name : "error"}). Please try again.`;
   }
+  // A tool request written as text in the last (tools-off) round is not an answer; never send raw JSON.
+  if (textToolCalls(answer, TOOLS.map((tool) => tool.name)).length) answer = "";
   answer = answer.trim() || FALLBACK;
   await store.logChat("bot", answer, now);
   return answer;
