@@ -36,7 +36,7 @@ export function normalizeTicker(input: string): string | null {
 
 const planBrief = (p: Plan) => ({
   code: p.code, state: p.state, action: p.action, entry_low: p.entryLow, entry_high: p.entryHigh,
-  partial_tp: p.partialTp, tp: p.tp, sl: p.sl, confidence: p.confidence, created: p.createdAt.slice(0, 10),
+  partial_tp: p.partialTp, tp: p.tp, sl: p.sl, trim_pct: p.trimPct, confidence: p.confidence, created: p.createdAt.slice(0, 10),
 });
 
 /** JSON within LIMIT characters; the named list is shortened (and marked truncated) when it doesn't fit. */

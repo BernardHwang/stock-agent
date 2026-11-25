@@ -3,7 +3,7 @@ import { type PlanFields, validateAgainstPrice, validateFields } from "../src/pl
 
 const buy = (kw: Partial<PlanFields> = {}): PlanFields => ({
   action: "BUY", entryLow: 100, entryHigh: 105, partialTp: null, tp: 130, sl: 90,
-  confidence: "medium", holdingMonths: 6, reasoning: "r", ...kw,
+  confidence: "medium", holdingMonths: 6, trimPct: null, reasoning: "r", ...kw,
 });
 const none = { entryLow: null, entryHigh: null, partialTp: null } as const;
 
@@ -27,6 +27,12 @@ describe("validateFields", () => {
   });
   it("needs tp and sl on a hold", () =>
     expect(validateFields({ ...buy(), ...none, action: "HOLD", tp: null })).toEqual(["HOLD needs tp and sl"]));
+  it("needs a trim size between 1 and 99 percent on a trim", () => {
+    const trim: PlanFields = { ...buy(), ...none, action: "TRIM", tp: 130, sl: 90 };
+    expect(validateFields(trim)).toEqual(["TRIM needs trim_pct between 1 and 99"]);
+    expect(validateFields({ ...trim, trimPct: 100 })).toEqual(["TRIM needs trim_pct between 1 and 99"]);
+    expect(validateFields({ ...trim, trimPct: 25 })).toEqual([]);
+  });
   it("needs no levels on an exit", () =>
     expect(validateFields({ ...buy(), ...none, action: "EXIT", tp: null, sl: null, holdingMonths: 0 })).toEqual([]));
 });

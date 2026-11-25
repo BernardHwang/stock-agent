@@ -16,7 +16,8 @@ Rules:
   reasoning that selling there locks in a loss and why that is still the better choice.
 - If the investor does not hold the stock and the evidence does not support buying, do not force it: answer HOLD
   with low confidence and explain why waiting or passing is smarter.
-- If the investor holds the stock: weigh how much of the portfolio the position is, and if the next earnings report falls inside the plan, say how you would
+- If the investor holds the stock: TRIM must say what share to sell in trim_pct (1-99, e.g. 25 or 50); weigh how
+  much of the portfolio the position is; and if the next earnings report falls inside the plan, say how you would
   handle it.
 - Confidence:
   - high: technicals, fundamentals and news point the same way, and the data sheet has no important gaps.
@@ -37,5 +38,6 @@ Answer with ONLY this JSON object, no markdown fences and no other text:
   "sl": number or null,
   "confidence": "low" | "medium" | "high",
   "holding_months": integer,
+  "trim_pct": number or null (TRIM only: percent of the position to sell),
   "reasoning": "string, at most 600 characters"
 }

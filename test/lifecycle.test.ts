@@ -8,7 +8,7 @@ import { Store } from "../src/store";
 const NOW = new Date("2026-11-06T10:00:00Z");
 const buy = (kw: Partial<PlanFields> = {}): PlanFields => ({
   action: "BUY", entryLow: 100, entryHigh: 105, partialTp: null, tp: 130, sl: 90,
-  confidence: "medium", holdingMonths: 6, reasoning: "r", ...kw,
+  confidence: "medium", holdingMonths: 6, trimPct: null, reasoning: "r", ...kw,
 });
 const hold = (kw: Partial<PlanFields> = {}): PlanFields =>
   buy({ action: "HOLD", entryLow: null, entryHigh: null, ...kw });

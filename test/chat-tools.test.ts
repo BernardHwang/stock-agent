@@ -14,7 +14,7 @@ const call = async (store: Store, name: string, args: Record<string, unknown> = 
   JSON.parse(await runTool(e, store, name, args, NOW));
 const hold: PlanFields = {
   action: "HOLD", entryLow: null, entryHigh: null, partialTp: null, tp: 400, sl: 280,
-  confidence: "medium", holdingMonths: 6, reasoning: "Keep holding.",
+  confidence: "medium", holdingMonths: 6, trimPct: null, reasoning: "Keep holding.",
 };
 
 

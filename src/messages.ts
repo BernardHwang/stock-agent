@@ -16,6 +16,7 @@ export function formatPlan(plan: Plan, price: number, avgCost: number | null = n
     `Price now: ${money(price)}`,
   ];
   if (cost !== null) lines.push(`Your average cost: ${money(cost)}`);
+  if (plan.action === "TRIM" && plan.trimPct !== null) lines.push(`Sell ${plan.trimPct}% of your position now`);
   if (plan.entryLow !== null && plan.entryHigh !== null) {
     lines.push(`Buy zone: ${money(plan.entryLow)} - ${money(plan.entryHigh)}`);
   }

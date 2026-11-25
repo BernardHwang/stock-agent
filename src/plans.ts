@@ -12,6 +12,8 @@ export interface PlanFields {
   sl: number | null;
   confidence: "low" | "medium" | "high";
   holdingMonths: number;
+  /** TRIM only: the share of the position to sell, 1-99. */
+  trimPct: number | null;
   reasoning: string;
 }
 
@@ -52,6 +54,9 @@ export function validateFields(f: PlanFields): string[] {
   } else if (f.action === "HOLD" || f.action === "TRIM") {
     const { tp, sl } = f;
     if (tp === null || sl === null) return [`${f.action} needs tp and sl`];
+    if (f.action === "TRIM" && !(f.trimPct !== null && f.trimPct >= 1 && f.trimPct <= 99)) {
+      errors.push("TRIM needs trim_pct between 1 and 99");
+    }
     if (!(sl < tp)) errors.push("sl must be below tp");
     if (f.partialTp !== null && !(sl < f.partialTp && f.partialTp < tp)) {
       errors.push("partial_tp must be between sl and tp");

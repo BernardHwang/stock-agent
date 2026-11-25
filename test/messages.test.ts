@@ -5,7 +5,7 @@ import type { Plan } from "../src/plans";
 const plan = (kw: Partial<Plan> = {}): Plan => ({
   id: 1, code: "US.MDB", state: "HELD", createdAt: "2026-11-24", fired: [],
   action: "HOLD", entryLow: null, entryHigh: null, partialTp: null, tp: 340, sl: 280,
-  confidence: "medium", holdingMonths: 6, reasoning: "r", ...kw,
+  confidence: "medium", holdingMonths: 6, trimPct: null, reasoning: "r", ...kw,
 });
 
 describe("formatPlan", () => {
@@ -23,6 +23,9 @@ describe("formatPlan", () => {
     expect(text).toContain("Take-profit: 340.00 (+7.6% vs now, -5.1% vs your cost)");
     expect(text).toContain("Stop-loss: 280.00 (-11.4% vs now, -21.8% vs your cost)");
   });
+
+  it("says how much of the position to sell on a trim", () =>
+    expect(formatPlan(plan({ action: "TRIM", trimPct: 25 }), 316)).toContain("Sell 25% of your position"));
 
   it("warns when the take-profit is below the average cost", () => {
     expect(formatPlan(plan(), 316, 358.09)).toContain("below your average cost");

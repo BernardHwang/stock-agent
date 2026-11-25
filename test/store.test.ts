@@ -6,7 +6,7 @@ import { Store } from "../src/store";
 const NOW = new Date("2026-11-24T03:00:00Z");
 const fields: PlanFields = {
   action: "HOLD", entryLow: null, entryHigh: null, partialTp: null, tp: 400, sl: 300,
-  confidence: "medium", holdingMonths: 6, reasoning: "r",
+  confidence: "medium", holdingMonths: 6, trimPct: null, reasoning: "r",
 };
 
 describe("Store", () => {
@@ -39,6 +39,15 @@ describe("Store", () => {
     expect(plan).toMatchObject({ id, code: "US.MDB", state: "HELD", sl: 300, fired: [], createdAt: NOW.toISOString() });
     await s.updatePlan({ ...plan!, state: "CLOSED" });
     expect(await s.activePlans()).toEqual([]);
+  });
+
+  it("saves and updates a trim's size", async () => {
+    const s = new Store(env.DB);
+    expect((await s.getPlan(await s.savePlan("US.A", fields, "HELD", NOW)))!.trimPct).toBeNull();
+    const id = await s.savePlan("US.T", { ...fields, action: "TRIM", trimPct: 25 }, "HELD", NOW);
+    expect((await s.getPlan(id))!.trimPct).toBe(25);
+    await s.updatePlan({ ...(await s.getPlan(id))!, trimPct: 50 });
+    expect((await s.getPlan(id))!.trimPct).toBe(50);
   });
 
   it("persists fired levels", async () => {

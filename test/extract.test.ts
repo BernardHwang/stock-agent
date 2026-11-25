@@ -10,7 +10,7 @@ describe("parsePlan", () => {
   it("reads plain JSON into plan fields", () => {
     expect(parsePlan(plan())).toEqual({
       action: "BUY", entryLow: 300, entryHigh: 315, partialTp: 360, tp: 390, sl: 270,
-      confidence: "medium", holdingMonths: 6, reasoning: "Accumulate near support.",
+      confidence: "medium", holdingMonths: 6, trimPct: null, reasoning: "Accumulate near support.",
     });
   });
 
@@ -22,6 +22,11 @@ describe("parsePlan", () => {
   it("treats missing levels as null and accepts numeric strings", () => {
     const f = parsePlan(JSON.stringify({ action: "EXIT", confidence: "high", holding_months: "0", reasoning: "r", tp: "" }));
     expect(f).toMatchObject({ action: "EXIT", entryLow: null, tp: null, sl: null, holdingMonths: 0 });
+  });
+
+  it("reads the trim size, rounded to a whole percent, and ignores it for other actions", () => {
+    expect(parsePlan(plan({ action: "TRIM", trim_pct: "33.4" })).trimPct).toBe(33);
+    expect(parsePlan(plan({ trim_pct: 25 })).trimPct).toBeNull();
   });
 
   it("cuts long reasoning to 600 characters", () => {
@@ -65,7 +70,7 @@ describe("extractPlan", () => {
   it("tells the retry that a hold's take-profit is below the investor's average cost", async () => {
     const hold = plan({ action: "HOLD", entry_low: null, entry_high: null, partial_tp: null, tp: 340, sl: 280 });
     const askPm = vi.fn<(extra: string) => Promise<string>>().mockResolvedValueOnce(hold)
-      .mockResolvedValueOnce(plan({ action: "TRIM", entry_low: null, entry_high: null, partial_tp: null, tp: 340, sl: 280 }));
+      .mockResolvedValueOnce(plan({ action: "TRIM", entry_low: null, entry_high: null, partial_tp: null, tp: 340, sl: 280, trim_pct: 25 }));
     const out = await extractPlan(askPm, 316, 358.09);
     expect(out).toMatchObject({ fields: { action: "TRIM" } });
     expect(askPm.mock.calls[1]![0]).toContain("average cost 358.09");

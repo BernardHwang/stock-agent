@@ -1,0 +1,1 @@
+ALTER TABLE plans ADD COLUMN trim_pct REAL;

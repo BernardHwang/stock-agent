@@ -12,7 +12,7 @@ const TUE_OPEN = new Date("2026-11-24T15:00:00Z");
 const DAYS = ["2026-11-23", "2026-11-24", "2026-11-25", "2026-11-27", "2026-11-30"];
 const hold: PlanFields = {
   action: "HOLD", entryLow: null, entryHigh: null, partialTp: null, tp: 400, sl: 300,
-  confidence: "medium", holdingMonths: 6, reasoning: "r",
+  confidence: "medium", holdingMonths: 6, trimPct: null, reasoning: "r",
 };
 const at = (iso: string) => new Date(iso);
 const plusMin = (d: Date, m: number) => new Date(d.getTime() + m * 60_000);

@@ -15,7 +15,7 @@ describe("skills", () => {
 
   it("asks the portfolio manager for the plan JSON", () => {
     for (const field of ['"action"', '"entry_low"', '"entry_high"', '"partial_tp"', '"tp"', '"sl"', '"confidence"',
-      '"holding_months"', '"reasoning"']) {
+      '"holding_months"', '"trim_pct"', '"reasoning"']) {
       expect(SKILLS.portfolio_manager).toContain(field);
     }
   });

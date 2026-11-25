@@ -7,7 +7,7 @@ import { type Position, Store } from "../src/store";
 const NOW = new Date("2026-11-06T02:00:00Z");
 const buy: PlanFields = {
   action: "BUY", entryLow: 100, entryHigh: 105, partialTp: null, tp: 130, sl: 90,
-  confidence: "medium", holdingMonths: 6, reasoning: "r",
+  confidence: "medium", holdingMonths: 6, trimPct: null, reasoning: "r",
 };
 const pos = (code = "US.NVDA", qty = 10, avgCost = 102): Position => ({ code, name: code, qty, avgCost });
 

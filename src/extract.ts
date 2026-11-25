@@ -29,6 +29,7 @@ export function parsePlan(text: string): PlanFields {
   const confidence = String(raw.confidence ?? "").toLowerCase() as PlanFields["confidence"];
   if (!CONFIDENCE.includes(confidence)) throw new Error(`unknown confidence ${String(raw.confidence)}`);
   const months = Number(raw.holding_months ?? 0);
+  const trim = level(raw.trim_pct, "trim_pct");
   let reasoning = String(raw.reasoning ?? "").trim();
   if (reasoning.length > REASONING_MAX) reasoning = `${reasoning.slice(0, REASONING_MAX - 1)}…`;
   return {
@@ -40,6 +41,7 @@ export function parsePlan(text: string): PlanFields {
     sl: level(raw.sl, "sl"),
     confidence,
     holdingMonths: Number.isFinite(months) ? Math.max(0, Math.round(months)) : 0,
+    trimPct: action === "TRIM" && trim !== null ? Math.round(trim) : null,
     reasoning,
   };
 }
@@ -64,6 +66,6 @@ export async function extractPlan(askPm: (extra: string) => Promise<string>, pri
   const first = check(await askPm(""), price, avgCost);
   if ("fields" in first) return first;
   const note = `${RETRY_NOTE}: ${first.errors.join("; ")}. Return a corrected plan as the JSON object only; ` +
-    "for HOLD or TRIM give both tp and sl.";
+    "for HOLD or TRIM give both tp and sl, and for TRIM a trim_pct.";
   return check(await askPm(note), price, avgCost);
 }

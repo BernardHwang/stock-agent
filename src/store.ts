@@ -21,6 +21,7 @@ interface PlanRow {
   sl: number | null;
   confidence: Plan["confidence"];
   holding_months: number;
+  trim_pct: number | null;
   reasoning: string;
   created_at: string;
   fired: string;
@@ -29,7 +30,7 @@ interface PlanRow {
 const toPlan = (r: PlanRow): Plan => ({
   id: r.id, code: r.code, state: r.state, action: r.action, entryLow: r.entry_low, entryHigh: r.entry_high,
   partialTp: r.partial_tp, tp: r.tp, sl: r.sl, confidence: r.confidence, holdingMonths: r.holding_months,
-  reasoning: r.reasoning, createdAt: r.created_at, fired: JSON.parse(r.fired) as string[],
+  trimPct: r.trim_pct, reasoning: r.reasoning, createdAt: r.created_at, fired: JSON.parse(r.fired) as string[],
 });
 
 export type QueueStatus = "pending" | "running" | "done" | "failed";
@@ -107,9 +108,9 @@ export class Store {
   async savePlan(code: string, f: PlanFields, state: PlanState, at: Date): Promise<number> {
     const row = await this.db.prepare(
       `INSERT INTO plans (code, state, action, entry_low, entry_high, partial_tp, tp, sl, confidence, holding_months,
-         reasoning, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+         trim_pct, reasoning, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
     ).bind(code, state, f.action, f.entryLow, f.entryHigh, f.partialTp, f.tp, f.sl, f.confidence, f.holdingMonths,
-      f.reasoning, at.toISOString()).first<{ id: number }>();
+      f.trimPct, f.reasoning, at.toISOString()).first<{ id: number }>();
     return row!.id;
   }
 
@@ -231,8 +232,8 @@ export class Store {
   async updatePlan(p: Plan): Promise<void> {
     await this.db.prepare(
       `UPDATE plans SET state = ?, action = ?, entry_low = ?, entry_high = ?, partial_tp = ?, tp = ?, sl = ?,
-         confidence = ?, holding_months = ?, reasoning = ?, fired = ? WHERE id = ?`,
+         confidence = ?, holding_months = ?, trim_pct = ?, reasoning = ?, fired = ? WHERE id = ?`,
     ).bind(p.state, p.action, p.entryLow, p.entryHigh, p.partialTp, p.tp, p.sl, p.confidence, p.holdingMonths,
-      p.reasoning, JSON.stringify(p.fired), p.id).run();
+      p.trimPct, p.reasoning, JSON.stringify(p.fired), p.id).run();
   }
 }
