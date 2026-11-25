@@ -42,6 +42,12 @@ async function moomooAndYahoo(yahooAnswer: () => Response) {
     if (url.includes("/financials/statements")) return new Response(indicators);
     if (url.includes("/valuation/detail")) return new Response(valuation);
     if (url.includes("/short/interest")) return new Response(short);
+    if (url.includes("/earnings-price-move")) {
+      return ok({ records: [{ pub_trading_day_str: "2026-09-01" }], overview_recent_period_count: 8, overview_avg_earnings_day_change_pct: 6.5 });
+    }
+    if (url.includes("/earnings-calendar")) {
+      return ok({ items: url.includes("begin_date=2026-12-01") ? [{ code: "US.MDB", earnings_date: "2026-12-03", pub_type: "AFTER" }] : [] });
+    }
     if (url.includes("/owner-plate")) {
       return ok({ name: "MongoDB", sectors: [{ plate_code: "US.LIST1", plate_name: "Cloud", plate_type: "CONCEPT" },
         { plate_code: "US.LIST2", plate_name: "Software", plate_type: "INDUSTRY" }] });
@@ -77,7 +83,9 @@ describe("buildDataSheet", () => {
       "## Price structure", "1 month: high 130.00, low 108.00, change 19.44%", "3 months: n/a",
       "## Volume", "Volume: n/a",
       "## Market context", "Industry: Software", "S&P 500 (US.SPY): 1 month 19.44%", "Nasdaq 100 (US.QQQ): 1 month 19.44%",
-      "US.MDB vs the S&P 500: 1 month +0.00 points"]) {
+      "US.MDB vs the S&P 500: 1 month +0.00 points",
+      "## Earnings", "Next report: 2026-12-03 (after the close), 9 days away",
+      "Last report: 2026-09-01; average earnings-day price change over the last 8 reports: 6.50%"]) {
       expect(sheet.text).toContain(part);
     }
   });
@@ -111,6 +119,16 @@ describe("buildDataSheet", () => {
     const { text } = await buildDataSheet("tok", "US.MDB", NOW);
     expect(text).toContain("Industry: n/a");
     expect(text).toContain("S&P 500 (US.SPY): n/a");
+  });
+
+  it("estimates the next earnings date when the calendar doesn't list it", async () => {
+    await moomooAndYahoo(() => new Response(JSON.stringify(yahoo)));
+    const fetchMock = vi.mocked(globalThis.fetch);
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) =>
+      String(input).includes("/earnings-calendar") ? ok({ items: [] }) : base(input, init));
+    const { text } = await buildDataSheet("tok", "US.MDB", NOW);
+    expect(text).toContain("Next report: not in moomoo's calendar for the next 4 weeks; estimated around 2026-12-01");
   });
 
   it("works without headlines", async () => {

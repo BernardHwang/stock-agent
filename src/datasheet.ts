@@ -4,7 +4,10 @@
  */
 import { atr, bollinger, change, macd, priceRange, rsi, sma, volumeProfile } from "./indicators";
 import { snapshotRows, sessionQuote } from "./moomoo/api";
-import { type Candle, candles, consensus, industry, keyIndicators, peValuation, shortInterest } from "./moomoo/research";
+import {
+  addDays, type Candle, candles, consensus, EARNINGS_WEEKS, earningsHistory, industry, keyIndicators, nextEarnings, peValuation,
+  shortInterest,
+} from "./moomoo/research";
 import { headlines } from "./news";
 import { localParts, type Session } from "./time";
 
@@ -69,9 +72,31 @@ function marketContext(code: string, closes: number[], sector: string | null, in
   return lines;
 }
 
+const SESSION_TEXT: Record<string, string> = { BEFORE: "before the open", AFTER: "after the close", REGULAR: "during the session" };
+const daysBetween = (from: string, to: string) => Math.round((Date.parse(to) - Date.parse(from)) / 86_400_000);
+
+function earningsLines(today: string, upcoming: { date: string; session: string | null } | null,
+  past: { lastDate: string | null; avgMovePct: number | null; periods: number | null } | null): string[] {
+  let next: string;
+  if (upcoming) {
+    const when = upcoming.session && SESSION_TEXT[upcoming.session] ? ` (${SESSION_TEXT[upcoming.session]})` : "";
+    next = `Next report: ${upcoming.date}${when}, ${daysBetween(today, upcoming.date)} days away`;
+  } else if (past?.lastDate) {
+    // Companies report quarterly, so about 91 days after the last report.
+    next = `Next report: not in moomoo's calendar for the next ${EARNINGS_WEEKS} weeks; estimated around ` +
+      `${addDays(past.lastDate, 91)} (last report + 91 days, an estimate only)`;
+  } else {
+    next = "Next report: n/a";
+  }
+  const last = past?.lastDate
+    ? `Last report: ${past.lastDate}; average earnings-day price change over the last ${past.periods ?? "few"} reports: ${pct(past.avgMovePct)}`
+    : "Last report: n/a";
+  return [next, last];
+}
+
 export async function buildDataSheet(token: string, code: string, now: Date): Promise<DataSheet> {
   const today = localParts(now, "America/New_York").date;
-  const [rows, history, analysts, indicators, pe, short, news, sector, ...indexHistory] = await Promise.all([
+  const [rows, history, analysts, indicators, pe, short, news, sector, pastEarnings, upcoming, ...indexHistory] = await Promise.all([
     snapshotRows(token, [code]),
     candles(token, code, today),
     optional(consensus(token, code)),
@@ -80,6 +105,8 @@ export async function buildDataSheet(token: string, code: string, now: Date): Pr
     optional(shortInterest(token, code)),
     headlines(code),
     optional(industry(token, code)),
+    optional(earningsHistory(token, code)),
+    optional(nextEarnings(token, code, today)),
     ...INDEXES.map(([index]) => optional(candles(token, index, today))),
   ]);
   const snap = rows.find((r) => r.code === code) ?? {};
@@ -127,6 +154,9 @@ export async function buildDataSheet(token: string, code: string, now: Date): Pr
     "",
     "## Market context",
     ...marketContext(code, closes, sector, indexHistory),
+    "",
+    "## Earnings",
+    ...earningsLines(today, upcoming, pastEarnings),
     "",
     "## Valuation & fundamentals",
     `Market cap: ${big(snap.total_market_val)}; PE (TTM): ${f(num(snap.pe_ttm_ratio))}; PB: ${f(num(snap.pb_ratio))}; ` +

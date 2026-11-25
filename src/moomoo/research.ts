@@ -97,3 +97,44 @@ export async function industry(token: string, code: string): Promise<string | nu
   const plate = ((d?.sectors as Obj[] | undefined) ?? []).find((s) => s.plate_type === "INDUSTRY");
   return plate?.plate_name ? String(plate.plate_name) : null;
 }
+
+/** YYYY-MM-DD plus ``days`` calendar days. */
+export function addDays(ymd: string, days: number): string {
+  const d = new Date(`${ymd}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/** The most recent earnings day and the average earnings-day price change (%) over recent reports. */
+export async function earningsHistory(token: string, code: string):
+  Promise<{ lastDate: string | null; avgMovePct: number | null; periods: number | null } | null> {
+  const query = new URLSearchParams({ count: "50", overview_count: "8" });
+  const d = (await apiGet(token, `/api/v1.0/quote/${encodeURIComponent(code)}/financials/earnings-price-move?${query}`)) as Obj | null;
+  if (!d) return null;
+  // Rows are days around each report, in no documented order: the latest report day is the largest date.
+  const dates = ((d.records as Obj[] | undefined) ?? []).map((r) => String(r.pub_trading_day_str ?? ""))
+    .filter((s) => /^\d{4}-\d{2}-\d{2}$/.test(s)).sort();
+  return { lastDate: dates.at(-1) ?? null, avgMovePct: num(d.overview_avg_earnings_day_change_pct), periods: num(d.overview_recent_period_count) };
+}
+
+export const EARNINGS_WEEKS = 4;
+
+/**
+ * The next unpublished earnings date within EARNINGS_WEEKS from ``today``. moomoo's calendar is market-wide and
+ * spans at most 7 days a call, so it is read week by week, largest companies first.
+ */
+export async function nextEarnings(token: string, code: string, today: string):
+  Promise<{ date: string; session: string | null } | null> {
+  const weeks = await Promise.all(Array.from({ length: EARNINGS_WEEKS }, async (_, w) => {
+    const query = new URLSearchParams({
+      market: "US", begin_date: addDays(today, w * 7), end_date: addDays(today, w * 7 + 6), sort_type: "MARKET_CAP", count: "500",
+    });
+    const d = (await apiGet(token, `/api/v1.0/quote/earnings-calendar?${query}`)) as Obj | null;
+    return (d?.items as Obj[] | undefined) ?? [];
+  }));
+  const next = weeks.flat()
+    .filter((i) => i.code === code && i.published !== true && String(i.earnings_date ?? "") >= today)
+    .map((i) => ({ date: String(i.earnings_date), session: typeof i.pub_type === "string" && /^[A-Z]+$/.test(i.pub_type) ? i.pub_type : null }))
+    .sort((a, b) => a.date.localeCompare(b.date))[0];
+  return next ?? null;
+}

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { candles, consensus, keyIndicators, peValuation, shortInterest } from "../src/moomoo/research";
+import { candles, consensus, earningsHistory, keyIndicators, nextEarnings, peValuation, shortInterest } from "../src/moomoo/research";
 import { mockFetch } from "./helpers";
 
 afterEach(() => vi.restoreAllMocks());
@@ -43,5 +43,36 @@ describe("moomoo research data", () => {
     expect(await shortInterest("tok", "US.X")).toBeNull();
     answer('{"ret_code":-3,"ret_msg":"missing required parameter: end"}');
     await expect(candles("tok", "US.MDB", "2026-11-24")).rejects.toThrow("missing required parameter");
+  });
+
+  it("reads the last earnings date and the average earnings-day move", async () => {
+    const day = (d: string, offset: number) => ({ pub_trading_day_str: d, day_offset: offset, period_text: "x" });
+    const calls = answer(JSON.stringify({ ret_code: 0, ret_msg: "success", data: {
+      records: [day("2026-06-02", -1), day("2026-06-02", 0), day("2026-09-01", -1), day("2026-09-01", 0)],
+      overview_recent_period_count: 8, overview_avg_earnings_day_change_pct: 1.1529,
+    } }));
+    expect(await earningsHistory("tok", "US.MDB")).toEqual({ lastDate: "2026-09-01", avgMovePct: 1.1529, periods: 8 });
+    expect(calls[0]!.url).toContain("/api/v1.0/quote/US.MDB/financials/earnings-price-move?");
+  });
+
+  it("finds the next unpublished earnings date in the market calendar, week by week", async () => {
+    const calls = mockFetch((url) => {
+      const items = url.includes("begin_date=2026-12-01")
+        ? [{ code: "US.MDB", earnings_date: "2026-12-03", pub_type: "AFTER", published: false }]
+        : url.includes("begin_date=2026-11-24")
+          ? [{ code: "US.MDB", earnings_date: "2026-11-24", published: true }, { code: "US.X", earnings_date: "2026-11-25" }]
+          : [];
+      return new Response(JSON.stringify({ ret_code: 0, ret_msg: "success", data: { items } }));
+    });
+    expect(await nextEarnings("tok", "US.MDB", "2026-11-24")).toEqual({ date: "2026-12-03", session: "AFTER" });
+    expect(calls).toHaveLength(4);
+    expect(calls[0]!.url).toContain("/api/v1.0/quote/earnings-calendar?");
+    expect(calls[0]!.url).toContain("end_date=2026-11-30");
+    expect(calls[0]!.url).toContain("market=US");
+  });
+
+  it("finds no next earnings date when the calendar doesn't list the stock", async () => {
+    answer(JSON.stringify({ ret_code: 0, ret_msg: "success", data: { items: [] } }));
+    expect(await nextEarnings("tok", "US.MDB", "2026-11-24")).toBeNull();
   });
 });
