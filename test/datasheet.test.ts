@@ -42,6 +42,10 @@ async function moomooAndYahoo(yahooAnswer: () => Response) {
     if (url.includes("/financials/statements")) return new Response(indicators);
     if (url.includes("/valuation/detail")) return new Response(valuation);
     if (url.includes("/short/interest")) return new Response(short);
+    if (url.includes("/owner-plate")) {
+      return ok({ name: "MongoDB", sectors: [{ plate_code: "US.LIST1", plate_name: "Cloud", plate_type: "CONCEPT" },
+        { plate_code: "US.LIST2", plate_name: "Software", plate_type: "INDUSTRY" }] });
+    }
     return undefined;
   });
 }
@@ -71,7 +75,9 @@ describe("buildDataSheet", () => {
     for (const part of ["## Price", "## Trend", "SMA 20: 119.50", "## Analysts", "461.39", "## Short interest", "3.45",
       "## Valuation & fundamentals", "Gross Margin", "## Headlines", "MongoDB beats estimates",
       "## Price structure", "1 month: high 130.00, low 108.00, change 19.44%", "3 months: n/a",
-      "## Volume", "Volume: n/a"]) {
+      "## Volume", "Volume: n/a",
+      "## Market context", "Industry: Software", "S&P 500 (US.SPY): 1 month 19.44%", "Nasdaq 100 (US.QQQ): 1 month 19.44%",
+      "US.MDB vs the S&P 500: 1 month +0.00 points"]) {
       expect(sheet.text).toContain(part);
     }
   });
@@ -91,6 +97,20 @@ describe("buildDataSheet", () => {
     const { text } = await buildDataSheet("tok", "US.MDB", NOW);
     expect(text).toContain("6 months: high 230.00, low 99.00");
     expect(text).toContain("Latest candle: 1K shares, 1.00x the 50-day average");
+  });
+
+  it("leaves out market context that moomoo doesn't answer", async () => {
+    await moomooAndYahoo(() => new Response(JSON.stringify(yahoo)));
+    const fetchMock = vi.mocked(globalThis.fetch);
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.includes("/owner-plate") || url.includes("US.SPY") || url.includes("US.QQQ")) return new Response("no", { status: 500 });
+      return base(input, init);
+    });
+    const { text } = await buildDataSheet("tok", "US.MDB", NOW);
+    expect(text).toContain("Industry: n/a");
+    expect(text).toContain("S&P 500 (US.SPY): n/a");
   });
 
   it("works without headlines", async () => {

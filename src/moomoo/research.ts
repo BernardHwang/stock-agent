@@ -90,3 +90,10 @@ export async function shortInterest(token: string, code: string): Promise<{ perc
   if (!item || percent === null) return null;
   return { percent, daysToCover: num(item.days_to_cover), asOf: String(item.timestamp_str ?? "") };
 }
+
+/** The stock's industry name from moomoo's plates (null when it lists none). */
+export async function industry(token: string, code: string): Promise<string | null> {
+  const d = (await apiGet(token, `/api/v1.0/quote/${encodeURIComponent(code)}/owner-plate`)) as Obj | null;
+  const plate = ((d?.sectors as Obj[] | undefined) ?? []).find((s) => s.plate_type === "INDUSTRY");
+  return plate?.plate_name ? String(plate.plate_name) : null;
+}

@@ -4,7 +4,7 @@
  */
 import { atr, bollinger, change, macd, priceRange, rsi, sma, volumeProfile } from "./indicators";
 import { snapshotRows, sessionQuote } from "./moomoo/api";
-import { candles, consensus, keyIndicators, peValuation, shortInterest } from "./moomoo/research";
+import { type Candle, candles, consensus, industry, keyIndicators, peValuation, shortInterest } from "./moomoo/research";
 import { headlines } from "./news";
 import { localParts, type Session } from "./time";
 
@@ -39,9 +39,39 @@ const optional = async <T>(p: Promise<T>): Promise<T | null> => {
   }
 };
 
+const INDEXES = [["US.SPY", "S&P 500"], ["US.QQQ", "Nasdaq 100"]] as const;
+const MONTHS = [[1, 21], [3, 63]] as const; // about 21 trading days a month
+const signed = (v: number | null) => (v === null ? "n/a" : `${v >= 0 ? "+" : ""}${v.toFixed(2)}`);
+
+/** Index trend and the stock's change against it: is the stock weak, or is the whole market? */
+function marketContext(code: string, closes: number[], sector: string | null, indexHistory: (Candle[] | null)[]): string[] {
+  const lines = [`Industry: ${sector ?? "n/a"}`];
+  for (const [i, [index, name]] of INDEXES.entries()) {
+    const ic = (indexHistory[i] ?? []).map((c) => c.close);
+    if (ic.length < 22) {
+      lines.push(`${name} (${index}): n/a`);
+      continue;
+    }
+    const last = ic.at(-1)!;
+    const vsSma = (n: number) => {
+      const s = sma(ic, n);
+      return s === null ? "n/a" : last >= s ? "above" : "below";
+    };
+    lines.push(`${name} (${index}): ${MONTHS.map(([m, n]) => `${m} month${m > 1 ? "s" : ""} ${pct(change(ic, n))}`).join(", ")}; ` +
+      `price ${vsSma(50)} its SMA 50, ${vsSma(200)} its SMA 200`);
+    const rel = MONTHS.map(([m, n]) => {
+      const s = change(closes, n);
+      const x = change(ic, n);
+      return `${m} month${m > 1 ? "s" : ""} ${signed(s === null || x === null ? null : s - x)} points`;
+    });
+    lines.push(`${code} vs the ${name}: ${rel.join(", ")} (negative = weaker than the market)`);
+  }
+  return lines;
+}
+
 export async function buildDataSheet(token: string, code: string, now: Date): Promise<DataSheet> {
   const today = localParts(now, "America/New_York").date;
-  const [rows, history, analysts, indicators, pe, short, news] = await Promise.all([
+  const [rows, history, analysts, indicators, pe, short, news, sector, ...indexHistory] = await Promise.all([
     snapshotRows(token, [code]),
     candles(token, code, today),
     optional(consensus(token, code)),
@@ -49,6 +79,8 @@ export async function buildDataSheet(token: string, code: string, now: Date): Pr
     optional(peValuation(token, code)),
     optional(shortInterest(token, code)),
     headlines(code),
+    optional(industry(token, code)),
+    ...INDEXES.map(([index]) => optional(candles(token, index, today))),
   ]);
   const snap = rows.find((r) => r.code === code) ?? {};
   const live = sessionQuote(snap, now);
@@ -92,6 +124,9 @@ export async function buildDataSheet(token: string, code: string, now: Date): Pr
         `(the latest candle may be a partial day); 20-day average ${f(vol.avg20VsAvg50)}x the 50-day; ` +
         `up-day vs down-day volume over 20 days: ${f(vol.upVsDown20)}x (above 1 = buying pressure)`
       : "Volume: n/a",
+    "",
+    "## Market context",
+    ...marketContext(code, closes, sector, indexHistory),
     "",
     "## Valuation & fundamentals",
     `Market cap: ${big(snap.total_market_val)}; PE (TTM): ${f(num(snap.pe_ttm_ratio))}; PB: ${f(num(snap.pb_ratio))}; ` +
