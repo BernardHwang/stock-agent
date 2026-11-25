@@ -2,7 +2,7 @@
  * The verified data sheet: every number an analysis may use, fetched and computed in code before any AI call.
  * The AI reasons over this text; it never looks up or calculates prices itself.
  */
-import { atr, bollinger, macd, rsi, sma } from "./indicators";
+import { atr, bollinger, change, macd, priceRange, rsi, sma, volumeProfile } from "./indicators";
 import { snapshotRows, sessionQuote } from "./moomoo/api";
 import { candles, consensus, keyIndicators, peValuation, shortInterest } from "./moomoo/research";
 import { headlines } from "./news";
@@ -26,6 +26,7 @@ const big = (v: unknown) => {
   if (!Number.isFinite(n) || n <= 0) return "n/a";
   return n >= 1e9 ? `${(n / 1e9).toFixed(2)}B` : `${(n / 1e6).toFixed(1)}M`;
 };
+const shares = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(2)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(0)}K` : String(n));
 const num = (v: unknown) => (v === null || v === undefined || v === "" || !Number.isFinite(Number(v)) ? null : Number(v));
 
 /** A rejected optional source becomes null instead of failing the analysis. */
@@ -60,6 +61,13 @@ export async function buildDataSheet(token: string, code: string, now: Date): Pr
   const prev = num(snap.prev_close_price) ?? history.at(-2)?.close ?? null;
   const m = macd(closes);
   const b = bollinger(closes);
+  const vol = volumeProfile(history);
+  // Trading days: about 21 a month.
+  const structure = ([[1, 21], [3, 63], [6, 126]] as const).map(([months, n]) => {
+    const r = priceRange(history, n);
+    const label = `${months} month${months > 1 ? "s" : ""}`;
+    return r ? `${label}: high ${f(r.high)}, low ${f(r.low)}, change ${pct(change(closes, n))}` : `${label}: n/a`;
+  });
   const lines = [
     `# Verified data sheet: ${code} (as of ${now.toISOString().slice(0, 16)}Z, ${session} session)`,
     "",
@@ -74,6 +82,16 @@ export async function buildDataSheet(token: string, code: string, now: Date): Pr
     `MACD: ${m ? `${f(m.macd)} / signal ${f(m.signal)} / histogram ${f(m.hist)}` : "n/a"}`,
     `Bollinger 20/2: ${b ? `${f(b.lower)} - ${f(b.upper)} (mid ${f(b.mid)})` : "n/a"}`,
     `Last 10 closes: ${history.slice(-10).map((c) => `${c.date.slice(5)} ${f(c.close)}`).join(", ") || "n/a"}`,
+    "",
+    "## Price structure (daily highs and lows; recent highs are resistance, recent lows support)",
+    ...structure,
+    "",
+    "## Volume",
+    vol
+      ? `Latest candle: ${shares(vol.last)} shares, ${f(vol.lastVsAvg50)}x the 50-day average ` +
+        `(the latest candle may be a partial day); 20-day average ${f(vol.avg20VsAvg50)}x the 50-day; ` +
+        `up-day vs down-day volume over 20 days: ${f(vol.upVsDown20)}x (above 1 = buying pressure)`
+      : "Volume: n/a",
     "",
     "## Valuation & fundamentals",
     `Market cap: ${big(snap.total_market_val)}; PE (TTM): ${f(num(snap.pe_ttm_ratio))}; PB: ${f(num(snap.pb_ratio))}; ` +

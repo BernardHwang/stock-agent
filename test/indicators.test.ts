@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { atr, bollinger, ema, macd, rsi, sma } from "../src/indicators";
+import { atr, bollinger, change, ema, macd, priceRange, rsi, sma, volumeProfile } from "../src/indicators";
 
 const range = <T>(n: number, f: (i: number) => T): T[] => Array.from({ length: n }, (_, i) => f(i));
 const candle = (close: number, spread = 2) => ({ date: "", open: close, high: close + spread / 2, low: close - spread / 2, close, volume: 1 });
@@ -48,5 +48,27 @@ describe("indicators", () => {
     expect(macd(range(20, (i) => i))).toBeNull();
     expect(bollinger([1, 2, 3])).toBeNull();
     expect(atr([candle(1)])).toBeNull();
+  });
+
+  it("finds the high and low of the last n candles", () => {
+    const cs = range(30, (i) => candle(100 + i));
+    expect(priceRange(cs, 21)).toEqual({ high: 130, low: 108 });
+    expect(priceRange(cs, 31)).toBeNull();
+  });
+
+  it("measures the change over the last n candles in percent", () => {
+    expect(change(range(30, (i) => 100 + i), 21)).toBeCloseTo(19.444, 2);
+    expect(change([1, 2], 2)).toBeNull();
+  });
+
+  it("compares recent volume with its 50-day average and up-day with down-day volume", () => {
+    // 50 candles at volume 100; the last 20 alternate up (volume 300) and down (volume 100) days.
+    const cs = range(50, (i) => ({ ...candle(100 + (i >= 30 && i % 2 === 0 ? 1 : 0)), volume: i >= 30 && i % 2 === 0 ? 300 : 100 }));
+    const v = volumeProfile(cs)!;
+    expect(v.last).toBe(100);
+    expect(v.lastVsAvg50).toBeCloseTo(100 / 140, 3);
+    expect(v.avg20VsAvg50).toBeCloseTo(200 / 140, 3);
+    expect(v.upVsDown20).toBeCloseTo(3, 3);
+    expect(volumeProfile(cs.slice(1))).toBeNull();
   });
 });

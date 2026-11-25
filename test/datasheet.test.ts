@@ -69,9 +69,28 @@ describe("buildDataSheet", () => {
     expect(sheet.price).toBe(312.69);
     expect(sheet.hasNews).toBe(true);
     for (const part of ["## Price", "## Trend", "SMA 20: 119.50", "## Analysts", "461.39", "## Short interest", "3.45",
-      "## Valuation & fundamentals", "Gross Margin", "## Headlines", "MongoDB beats estimates"]) {
+      "## Valuation & fundamentals", "Gross Margin", "## Headlines", "MongoDB beats estimates",
+      "## Price structure", "1 month: high 130.00, low 108.00, change 19.44%", "3 months: n/a",
+      "## Volume", "Volume: n/a"]) {
       expect(sheet.text).toContain(part);
     }
+  });
+
+  it("shows six months of price structure and the volume profile when the history is long enough", async () => {
+    await moomooAndYahoo(() => new Response(JSON.stringify(yahoo)));
+    const long = {
+      kline_list: Array.from({ length: 130 }, (_, i) => {
+        const d = new Date(Date.UTC(2026, 4, 1 + i));
+        return { date: Number(d.toISOString().slice(0, 10).replace(/-/g, "")), open: 100, high: 101 + i, low: 99, close: 100 + i, volume: 1000 };
+      }),
+    };
+    const fetchMock = vi.mocked(globalThis.fetch);
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) =>
+      String(input).includes("/history-kline") ? ok(long) : base(input, init));
+    const { text } = await buildDataSheet("tok", "US.MDB", NOW);
+    expect(text).toContain("6 months: high 230.00, low 99.00");
+    expect(text).toContain("Latest candle: 1K shares, 1.00x the 50-day average");
   });
 
   it("works without headlines", async () => {

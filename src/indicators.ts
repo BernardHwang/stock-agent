@@ -66,3 +66,39 @@ export function atr(candles: Candle[], n = 14): number | null {
   for (const t of tr.slice(n)) value = (value * (n - 1) + t) / n;
   return value;
 }
+
+/** Highest high and lowest low of the last ``n`` candles. */
+export function priceRange(candles: Candle[], n: number): { high: number; low: number } | null {
+  if (candles.length < n) return null;
+  const last = candles.slice(-n);
+  return { high: Math.max(...last.map((c) => c.high)), low: Math.min(...last.map((c) => c.low)) };
+}
+
+/** Percent change of the last close against the close ``n`` candles earlier. */
+export function change(closes: number[], n: number): number | null {
+  if (closes.length < n + 1) return null;
+  const from = closes[closes.length - 1 - n]!;
+  return ((closes[closes.length - 1]! - from) / from) * 100;
+}
+
+/**
+ * Volume against its 50-day average, and the volume of up days against down days over the last 20 days
+ * (above 1 suggests buying pressure, below 1 selling pressure).
+ */
+export function volumeProfile(candles: Candle[]):
+  { last: number; lastVsAvg50: number; avg20VsAvg50: number; upVsDown20: number | null } | null {
+  if (candles.length < 50) return null;
+  const vols = candles.map((c) => c.volume);
+  const avg50 = mean(vols.slice(-50));
+  if (!avg50) return null;
+  let up = 0;
+  let down = 0;
+  for (let i = candles.length - 20; i < candles.length; i++) {
+    if (candles[i]!.close > candles[i - 1]!.close) up += candles[i]!.volume;
+    else if (candles[i]!.close < candles[i - 1]!.close) down += candles[i]!.volume;
+  }
+  return {
+    last: vols.at(-1)!, lastVsAvg50: vols.at(-1)! / avg50, avg20VsAvg50: mean(vols.slice(-20)) / avg50,
+    upVsDown20: down ? up / down : null,
+  };
+}
