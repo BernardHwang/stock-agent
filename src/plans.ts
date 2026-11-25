@@ -60,8 +60,12 @@ export function validateFields(f: PlanFields): string[] {
   return errors;
 }
 
-/** Reject levels that don't fit the live price: already crossed, or far from where the stock trades. */
-export function validateAgainstPrice(f: PlanFields, price: number | null): string[] {
+/**
+ * Reject levels that don't fit the live price: already crossed, or far from where the stock trades.
+ * ``avgCost`` is the held position's cost: holding means expecting to get back above it, so a HOLD (or a BUY,
+ * which becomes a HOLD on a holding) can't target less; a TRIM or EXIT may.
+ */
+export function validateAgainstPrice(f: PlanFields, price: number | null, avgCost: number | null = null): string[] {
   if (price === null) return [];
   const errors: string[] = [];
   if (f.sl !== null && f.sl >= price) {
@@ -70,6 +74,10 @@ export function validateAgainstPrice(f: PlanFields, price: number | null): strin
   // Not TRIM: "trim now, the target is reached" is valid advice; a HOLD toward a target already passed is not.
   if ((f.action === "BUY" || f.action === "HOLD") && f.tp !== null && f.tp <= price) {
     errors.push(`take-profit ${f.tp.toFixed(2)} is at or below the current price ${price.toFixed(2)}`);
+  }
+  if (avgCost !== null && avgCost > 0 && (f.action === "BUY" || f.action === "HOLD") && f.tp !== null && f.tp < avgCost) {
+    errors.push(`take-profit ${f.tp.toFixed(2)} is below your average cost ${avgCost.toFixed(2)}; a HOLD must target ` +
+      "at least the average cost, otherwise answer TRIM or EXIT");
   }
   if (f.action === "BUY" && f.entryLow !== null && f.entryHigh !== null) {
     const zone = `${f.entryLow.toFixed(2)}-${f.entryHigh.toFixed(2)}`;

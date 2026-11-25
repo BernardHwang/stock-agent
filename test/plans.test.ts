@@ -57,5 +57,16 @@ describe("validateAgainstPrice", () => {
     expect(validateAgainstPrice(hold, 316).some((e) => e.includes("take-profit"))).toBe(true);
     expect(validateAgainstPrice({ ...hold, tp: 340 }, 316)).toEqual([]);
   });
+  it("rejects a hold or held buy whose take-profit is below the average cost", () => {
+    const hold: PlanFields = { ...buy(), ...none, action: "HOLD", tp: 340, sl: 280 };
+    expect(validateAgainstPrice(hold, 316, 358.09).some((e) => e.includes("average cost 358.09"))).toBe(true);
+    expect(validateAgainstPrice(big({ entryLow: 300, entryHigh: 315, sl: 270, tp: 340 }), 316, 358.09)
+      .some((e) => e.includes("average cost"))).toBe(true);
+    expect(validateAgainstPrice({ ...hold, tp: 360 }, 316, 358.09)).toEqual([]);
+  });
+  it("lets a trim target sit below the average cost", () => {
+    const trim: PlanFields = { ...buy(), ...none, action: "TRIM", tp: 340, sl: 280 };
+    expect(validateAgainstPrice(trim, 316, 358.09)).toEqual([]);
+  });
   it("skips the checks without a live price", () => expect(validateAgainstPrice(big(), null)).toEqual([]));
 });

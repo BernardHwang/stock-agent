@@ -111,6 +111,19 @@ describe("runAnalysis", () => {
   });
 });
 
+describe("runAnalysis on a holding", () => {
+  it("checks a hold's take-profit against the investor's average cost", async () => {
+    const hold = JSON.stringify({ action: "HOLD", entry_low: null, entry_high: null, partial_tp: null, tp: 340, sl: 280,
+      confidence: "medium", holding_months: 6, reasoning: "Hold." });
+    const { store, item, e, deps } = await setup(hold);
+    await store.savePositions([{ code: "US.MDB", name: "MongoDB", qty: 7, avgCost: 358.09 }], NOW);
+    const sent = mockFetch(telegramOk);
+    await runAnalysis(fakeStep(), e, store, item, NOW, deps);
+    expect(await store.planFor("US.MDB")).toBeNull();
+    expect(sentTexts(sent)[0]).toContain("below your average cost 358.09");
+  });
+});
+
 describe("runAnalysis bookkeeping", () => {
   it("marks the run as paid once an AI call succeeded", async () => {
     const { store, item, e, deps } = await setup(goodPlan);

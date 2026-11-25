@@ -44,11 +44,11 @@ export function parsePlan(text: string): PlanFields {
   };
 }
 
-function check(text: string, price: number): { fields: PlanFields } | { errors: string[] } {
+function check(text: string, price: number, avgCost: number | null): { fields: PlanFields } | { errors: string[] } {
   try {
     const fields = parsePlan(text);
     const errors = validateFields(fields);
-    const priceErrors = errors.length ? [] : validateAgainstPrice(fields, price);
+    const priceErrors = errors.length ? [] : validateAgainstPrice(fields, price, avgCost);
     return errors.length || priceErrors.length ? { errors: [...errors, ...priceErrors] } : { fields };
   } catch (e) {
     return { errors: [e instanceof Error ? e.message : String(e)] };
@@ -57,13 +57,13 @@ function check(text: string, price: number): { fields: PlanFields } | { errors: 
 
 /**
  * Ask the portfolio manager (``askPm("")``), check the plan, and on failure ask once more with the reasons.
- * ``askPm`` receives extra text to append to its prompt.
+ * ``askPm`` receives extra text to append to its prompt; ``avgCost`` is the held position's cost, if any.
  */
-export async function extractPlan(askPm: (extra: string) => Promise<string>, price: number):
+export async function extractPlan(askPm: (extra: string) => Promise<string>, price: number, avgCost: number | null = null):
   Promise<{ fields: PlanFields } | { errors: string[] }> {
-  const first = check(await askPm(""), price);
+  const first = check(await askPm(""), price, avgCost);
   if ("fields" in first) return first;
   const note = `${RETRY_NOTE}: ${first.errors.join("; ")}. Return a corrected plan as the JSON object only; ` +
     "for HOLD or TRIM give both tp and sl.";
-  return check(await askPm(note), price);
+  return check(await askPm(note), price, avgCost);
 }

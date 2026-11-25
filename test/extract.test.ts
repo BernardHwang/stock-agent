@@ -62,6 +62,16 @@ describe("extractPlan", () => {
     expect(askPm).toHaveBeenCalledTimes(2);
   });
 
+  it("tells the retry that a hold's take-profit is below the investor's average cost", async () => {
+    const hold = plan({ action: "HOLD", entry_low: null, entry_high: null, partial_tp: null, tp: 340, sl: 280 });
+    const askPm = vi.fn<(extra: string) => Promise<string>>().mockResolvedValueOnce(hold)
+      .mockResolvedValueOnce(plan({ action: "TRIM", entry_low: null, entry_high: null, partial_tp: null, tp: 340, sl: 280 }));
+    const out = await extractPlan(askPm, 316, 358.09);
+    expect(out).toMatchObject({ fields: { action: "TRIM" } });
+    expect(askPm.mock.calls[1]![0]).toContain("average cost 358.09");
+    expect(askPm.mock.calls[1]![0]).toContain("TRIM or EXIT");
+  });
+
   it("retries when the first answer is not JSON at all", async () => {
     const askPm = vi.fn<(extra: string) => Promise<string>>().mockResolvedValueOnce("Sorry, no plan.").mockResolvedValueOnce(plan());
     expect("fields" in (await extractPlan(askPm, 316))).toBe(true);

@@ -72,7 +72,7 @@ export async function runAnalysis(step: Step, env: Env, store: Store, item: Queu
   const outcome = await step.do<Outcome>("portfolio_manager", () => extractPlan((extra) =>
     ask(env, store, env.DEEP_MODEL || DEFAULT_DEEP_MODEL, SKILLS.portfolio_manager,
       `Stock: ${code}\n${holding}\n\n${sheet.text}\n\n${analysts}\n\n${proposal}\n\n${risk}${extra ? `\n\n${extra}` : ""}`,
-      MAX_TOKENS.portfolio_manager, now), sheet.price));
+      MAX_TOKENS.portfolio_manager, now), sheet.price, position?.avgCost ?? null));
 
   const report = [`# Analysis of ${code}, ${now.toISOString().slice(0, 10)} (price ${sheet.price.toFixed(2)})`, analysts,
     debate, `## Research manager\n${manager}`, `## Trader\n${trader}`, risk,

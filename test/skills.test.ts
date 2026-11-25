@@ -19,5 +19,5 @@ describe("skills", () => {
   });
 
   it("tells the portfolio manager to weigh the investor's average cost", () =>
-    expect(SKILLS.portfolio_manager).toContain("average cost"));
+    expect(SKILLS.portfolio_manager).toMatch(/A HOLD's tp must be at or above the\s+investor's average cost/));
 });
