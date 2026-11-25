@@ -112,6 +112,28 @@ describe("runAnalysis", () => {
 });
 
 describe("runAnalysis on a holding", () => {
+  it("tells every role the holding's profit or loss and its share of the portfolio", async () => {
+    const { store, item, calls, e, deps } = await setup(goodPlan);
+    await store.savePositions([{ code: "US.MDB", name: "MongoDB", qty: 7, avgCost: 358.09 },
+      { code: "US.X", name: "X", qty: 10, avgCost: 100 }], NOW);
+    mockFetch(telegramOk);
+    const prices = vi.fn(async () => new Map([["US.X", 200]]));
+    await runAnalysis(fakeStep(), e, store, item, NOW, { ...deps, prices });
+    // 7 x 316 = 2212 of 2212 + 10 x 200 = 4212
+    for (const c of calls) {
+      expect(c.user).toContain("at an average cost of 358.09 (currently -11.8% vs cost), about 53% of their portfolio by market value");
+    }
+    expect(prices).toHaveBeenCalledWith("tok", ["US.MDB", "US.X"], NOW);
+  });
+
+  it("still analyses a holding when the portfolio prices can't be fetched", async () => {
+    const { store, item, calls, e, deps } = await setup(goodPlan);
+    await store.savePositions([{ code: "US.MDB", name: "MongoDB", qty: 7, avgCost: 358.09 }], NOW);
+    mockFetch(telegramOk);
+    await runAnalysis(fakeStep(), e, store, item, NOW, { ...deps, prices: async () => { throw new Error("down"); } });
+    expect(calls.at(-1)!.user).toContain("(currently -11.8% vs cost), about 100% of their portfolio");
+  });
+
   it("checks a hold's take-profit against the investor's average cost", async () => {
     const hold = JSON.stringify({ action: "HOLD", entry_low: null, entry_high: null, partial_tp: null, tp: 340, sl: 280,
       confidence: "medium", holding_months: 6, reasoning: "Hold." });

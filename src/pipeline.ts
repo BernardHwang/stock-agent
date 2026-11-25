@@ -8,10 +8,11 @@ import type { Env } from "./env";
 import { extractPlan } from "./extract";
 import { applyNewAnalysis } from "./lifecycle";
 import { formatInvalidPlan, formatNoPlan, formatPlan } from "./messages";
+import { quotes } from "./moomoo/api";
 import { accessToken } from "./moomoo/oauth";
 import type { PlanFields } from "./plans";
 import { type Role, SKILLS } from "./skills";
-import type { QueueItem, Store } from "./store";
+import type { Position, QueueItem, Store } from "./store";
 import { send } from "./telegram";
 
 export interface Step {
@@ -29,8 +30,24 @@ const MAX_TOKENS: Record<Role, number> = {
 export interface PipelineDeps {
   sheet: (token: string, code: string, now: Date) => Promise<DataSheet>;
   token: (env: Env, store: Store, now: Date) => Promise<string | null>;
+  /** Live prices for the held codes, used to size the analysed position within the portfolio. */
+  prices?: (token: string, codes: string[], now: Date) => Promise<Map<string, number>>;
 }
-const DEFAULT_DEPS: PipelineDeps = { sheet: buildDataSheet, token: accessToken };
+const livePrices = async (token: string, codes: string[], now: Date) =>
+  new Map([...(await quotes(token, codes, now))].map(([code, q]) => [code, q.price]));
+const DEFAULT_DEPS: PipelineDeps = { sheet: buildDataSheet, token: accessToken, prices: livePrices };
+
+/** "The investor holds ..." with the position's profit or loss and its share of the portfolio by market value. */
+function holdingText(position: Position | undefined, positions: Position[], price: number, prices: Map<string, number>): string {
+  if (!position) return "The investor does not hold this stock.";
+  const cost = position.avgCost;
+  const pl = cost ? ` (currently ${price >= cost ? "+" : ""}${(((price - cost) / cost) * 100).toFixed(1)}% vs cost)` : "";
+  // Missing quotes fall back to the cost; a position with neither is left out of the total.
+  const value = (p: Position) => p.qty * (p.code === position.code ? price : prices.get(p.code) ?? p.avgCost ?? 0);
+  const total = positions.reduce((sum, p) => sum + value(p), 0);
+  const share = total > 0 ? `, about ${((value(position) / total) * 100).toFixed(0)}% of their portfolio by market value` : "";
+  return `The investor holds ${position.qty} shares at an average cost of ${cost?.toFixed(2) ?? "unknown"}${pl}${share}.`;
+}
 
 type Outcome = { fields: PlanFields } | { errors: string[] };
 
@@ -42,10 +59,19 @@ export async function runAnalysis(step: Step, env: Env, store: Store, item: Queu
     if (!token) throw new Error("moomoo isn't connected");
     return deps.sheet(token, code, now);
   });
-  const position = (await store.lastPositions()).find((p) => p.code === code);
-  const holding = position
-    ? `The investor holds ${position.qty} shares at an average cost of ${position.avgCost?.toFixed(2) ?? "unknown"}.`
-    : "The investor does not hold this stock.";
+  const positions = await store.lastPositions();
+  const position = positions.find((p) => p.code === code);
+  const prices = position ? await step.do("portfolio", async () => {
+    try {
+      const token = await deps.token(env, store, now);
+      const found = token ? await (deps.prices ?? livePrices)(token, positions.map((p) => p.code), now) : new Map<string, number>();
+      return [...found]; // step results must be serializable
+    } catch (e) {
+      console.error("portfolio prices failed", e instanceof Error ? e.name : typeof e);
+      return [] as [string, number][];
+    }
+  }) : [];
+  const holding = holdingText(position, positions, sheet.price, new Map(prices));
 
   // Once an AI call has been paid for, a later failure keeps the run counted against the daily limit.
   const paid = <T>(answer: T) => store.setSetting(`analysis_paid:${item.id}`, "1").then(() => answer);
