@@ -146,6 +146,20 @@ describe("runAnalysis on a holding", () => {
   });
 });
 
+describe("runAnalysis with lessons", () => {
+  it("gives the portfolio manager the stock's lessons from past plans, when there are any", async () => {
+    const first = await setup(goodPlan);
+    mockFetch(telegramOk);
+    await runAnalysis(fakeStep(), first.e, first.store, first.item, NOW, first.deps);
+    expect(first.calls.at(-1)!.user).not.toContain("## Lessons from past plans");
+
+    const { store, item, calls, e, deps } = await setup(goodPlan);
+    await store.saveLesson("US.MDB", 99, "Don't chase a gap up into resistance.", NOW);
+    await runAnalysis(fakeStep(), e, store, item, NOW, deps);
+    expect(calls.at(-1)!.user).toContain("## Lessons from past plans for US.MDB\n- Don't chase a gap up into resistance.");
+  });
+});
+
 describe("runAnalysis bookkeeping", () => {
   it("marks the run as paid once an AI call succeeded", async () => {
     const { store, item, e, deps } = await setup(goodPlan);

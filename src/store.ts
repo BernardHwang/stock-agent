@@ -289,4 +289,20 @@ export class Store {
     ).first<{ scored: number; stops: number | null; targets: number | null; avg12w: number | null }>();
     return { scored: r?.scored ?? 0, stops: r?.stops ?? 0, targets: r?.targets ?? 0, avg12w: r?.avg12w ?? null };
   }
+
+  // Lessons from past plans
+  async hasLesson(planId: number): Promise<boolean> {
+    return Boolean(await this.db.prepare("SELECT 1 FROM lessons WHERE plan_id = ?").bind(planId).first());
+  }
+
+  async saveLesson(code: string, planId: number, text: string, at: Date): Promise<void> {
+    await this.db.prepare("INSERT OR IGNORE INTO lessons (code, plan_id, text, at) VALUES (?, ?, ?, ?)")
+      .bind(code, planId, text, at.toISOString()).run();
+  }
+
+  async recentLessons(code: string, n: number): Promise<string[]> {
+    const { results } = await this.db.prepare("SELECT text FROM lessons WHERE code = ? ORDER BY id DESC LIMIT ?")
+      .bind(code, n).all<{ text: string }>();
+    return results.map((r) => r.text);
+  }
 }

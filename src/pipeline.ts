@@ -95,9 +95,11 @@ export async function runAnalysis(step: Step, env: Env, store: Store, item: Queu
     `${analysts}\n\n${proposal}\n\n## Aggressive view\n${aggressive}\n\n## Neutral view\n${neutral}`);
   const risk = `## Aggressive view\n${aggressive}\n\n## Neutral view\n${neutral}\n\n## Conservative view\n${conservative}`;
 
+  const lessons = await store.recentLessons(code, 3);
+  const lessonText = lessons.length ? `\n\n## Lessons from past plans for ${code}\n${lessons.map((l) => `- ${l}`).join("\n")}` : "";
   const outcome = await step.do<Outcome>("portfolio_manager", () => extractPlan((extra) =>
     ask(env, store, env.DEEP_MODEL || DEFAULT_DEEP_MODEL, SKILLS.portfolio_manager,
-      `Stock: ${code}\n${holding}\n\n${sheet.text}\n\n${analysts}\n\n${proposal}\n\n${risk}${extra ? `\n\n${extra}` : ""}`,
+      `Stock: ${code}\n${holding}\n\n${sheet.text}\n\n${analysts}\n\n${proposal}\n\n${risk}${lessonText}${extra ? `\n\n${extra}` : ""}`,
       MAX_TOKENS.portfolio_manager, now), sheet.price, position?.avgCost ?? null));
 
   const report = [`# Analysis of ${code}, ${now.toISOString().slice(0, 10)} (price ${sheet.price.toFixed(2)})`, analysts,
