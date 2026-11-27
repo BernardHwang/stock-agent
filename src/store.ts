@@ -33,6 +33,22 @@ const toPlan = (r: PlanRow): Plan => ({
   trimPct: r.trim_pct, reasoning: r.reasoning, createdAt: r.created_at, fired: JSON.parse(r.fired) as string[],
 });
 
+export interface Outcome {
+  planId: number;
+  firstHit: "SL" | "TP" | null;
+  ret4w: number | null;
+  ret12w: number | null;
+  ret26w: number | null;
+}
+
+interface OutcomeRow {
+  plan_id: number;
+  first_hit: string | null;
+  ret_4w: number | null;
+  ret_12w: number | null;
+  ret_26w: number | null;
+}
+
 export type QueueStatus = "pending" | "running" | "done" | "failed";
 export type ChatRole = "user" | "bot" | "alert";
 
@@ -246,5 +262,31 @@ export class Store {
   async saveConsensus(code: string, rating: number | null, average: number | null, at: Date): Promise<void> {
     await this.db.prepare("INSERT OR REPLACE INTO consensus (code, rating, average, at) VALUES (?, ?, ?, ?)")
       .bind(code, rating, average, at.toISOString()).run();
+  }
+
+  // Plan outcomes
+  async allPlans(): Promise<Plan[]> {
+    const { results } = await this.db.prepare("SELECT * FROM plans ORDER BY id").all<PlanRow>();
+    return results.map(toPlan);
+  }
+
+  async outcome(planId: number): Promise<Outcome | null> {
+    const r = await this.db.prepare("SELECT * FROM outcomes WHERE plan_id = ?").bind(planId).first<OutcomeRow>();
+    return r ? { planId: r.plan_id, firstHit: r.first_hit as Outcome["firstHit"], ret4w: r.ret_4w, ret12w: r.ret_12w, ret26w: r.ret_26w } : null;
+  }
+
+  async saveOutcome(o: Outcome, at: Date): Promise<void> {
+    await this.db.prepare(
+      "INSERT OR REPLACE INTO outcomes (plan_id, first_hit, ret_4w, ret_12w, ret_26w, at) VALUES (?, ?, ?, ?, ?, ?)",
+    ).bind(o.planId, o.firstHit, o.ret4w, o.ret12w, o.ret26w, at.toISOString()).run();
+  }
+
+  /** Plans scored, stops and targets hit first, and the average 12-week return (a fraction) where known. */
+  async scorecard(): Promise<{ scored: number; stops: number; targets: number; avg12w: number | null }> {
+    const r = await this.db.prepare(
+      `SELECT COUNT(*) AS scored, SUM(first_hit = 'SL') AS stops, SUM(first_hit = 'TP') AS targets, AVG(ret_12w) AS avg12w
+         FROM outcomes`,
+    ).first<{ scored: number; stops: number | null; targets: number | null; avg12w: number | null }>();
+    return { scored: r?.scored ?? 0, stops: r?.stops ?? 0, targets: r?.targets ?? 0, avg12w: r?.avg12w ?? null };
   }
 }
