@@ -117,24 +117,51 @@ export async function earningsHistory(token: string, code: string):
   return { lastDate: dates.at(-1) ?? null, avgMovePct: num(d.overview_avg_earnings_day_change_pct), periods: num(d.overview_recent_period_count) };
 }
 
-export const EARNINGS_WEEKS = 4;
+export interface EarningsItem {
+  code: string;
+  date: string; // YYYY-MM-DD
+  when: string | null; // BEFORE / AFTER / REGULAR when moomoo says so
+  epsEstimate: number | null;
+  published: boolean;
+}
 
-/**
- * The next unpublished earnings date within EARNINGS_WEEKS from ``today``. moomoo's calendar is market-wide and
- * spans at most 7 days a call, so it is read week by week, largest companies first.
- */
-export async function nextEarnings(token: string, code: string, today: string):
-  Promise<{ date: string; session: string | null } | null> {
-  const weeks = await Promise.all(Array.from({ length: EARNINGS_WEEKS }, async (_, w) => {
-    const query = new URLSearchParams({
-      market: "US", begin_date: addDays(today, w * 7), end_date: addDays(today, w * 7 + 6), sort_type: "MARKET_CAP", count: "500",
-    });
+/** The US earnings calendar from ``from`` to ``to`` (inclusive), read in spans of at most 7 days, largest companies first. */
+export async function earnings(token: string, from: string, to: string): Promise<EarningsItem[]> {
+  const spans: [string, string][] = [];
+  for (let begin = from; begin <= to; begin = addDays(begin, 7)) {
+    const end = addDays(begin, 6);
+    spans.push([begin, end < to ? end : to]);
+  }
+  const lists = await Promise.all(spans.map(async ([begin, end]) => {
+    const query = new URLSearchParams({ market: "US", begin_date: begin, end_date: end, sort_type: "MARKET_CAP", count: "500" });
     const d = (await apiGet(token, `/api/v1.0/quote/earnings-calendar?${query}`)) as Obj | null;
     return (d?.items as Obj[] | undefined) ?? [];
   }));
-  const next = weeks.flat()
-    .filter((i) => i.code === code && i.published !== true && String(i.earnings_date ?? "") >= today)
-    .map((i) => ({ date: String(i.earnings_date), session: typeof i.pub_type === "string" && /^[A-Z]+$/.test(i.pub_type) ? i.pub_type : null }))
+  return lists.flat()
+    .filter((i) => typeof i.code === "string" && /^\d{4}-\d{2}-\d{2}$/.test(String(i.earnings_date ?? "")))
+    .map((i) => ({
+      code: String(i.code), date: String(i.earnings_date),
+      when: typeof i.pub_type === "string" && /^[A-Z]+$/.test(i.pub_type) ? i.pub_type : null,
+      epsEstimate: num(i.eps_predict), published: i.published === true,
+    }));
+}
+
+export const EARNINGS_WEEKS = 4;
+
+/** The next unpublished earnings date for ``code`` within EARNINGS_WEEKS from ``today``. */
+export async function nextEarnings(token: string, code: string, today: string):
+  Promise<{ date: string; session: string | null } | null> {
+  const next = (await earnings(token, today, addDays(today, EARNINGS_WEEKS * 7 - 1)))
+    .filter((i) => i.code === code && !i.published && i.date >= today)
     .sort((a, b) => a.date.localeCompare(b.date))[0];
-  return next ?? null;
+  return next ? { date: next.date, session: next.when } : null;
+}
+
+/** Year-on-year growth (%) of revenue and net income from the newest income statement. */
+export async function incomeGrowth(token: string, code: string): Promise<{ revenue: number | null; netIncome: number | null }> {
+  const query = new URLSearchParams({ statement_type: "1", limit: "1" });
+  const d = (await apiGet(token, `/api/v1.0/quote/${encodeURIComponent(code)}/financials/statements?${query}`)) as Obj | null;
+  const items = (((d?.report_list as Obj[] | undefined) ?? [])[0]?.item_list as Obj[] | undefined) ?? [];
+  const yoy = (name: string) => num(items.find((i) => i.display_name === name)?.yoy);
+  return { revenue: yoy("Total Operating Revenue"), netIncome: yoy("Net Income to Common Stockholders") };
 }

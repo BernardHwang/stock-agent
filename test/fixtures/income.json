@@ -1,0 +1,1 @@
+{"ret_code":0,"ret_msg":"success","data":{"report_list":[{"currency_code":"USD","financial_type":2,"fiscal_year":2027,"period_text":"Q2 2027","item_list":[{"display_name":"Total Operating Revenue","data":628300000,"yoy":30.5},{"display_name":"Gross Profit","data":456700000,"yoy":31.2},{"display_name":"Net Income to Common Stockholders","data":13300000,"yoy":187.0}]}]}}
