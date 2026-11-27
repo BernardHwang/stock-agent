@@ -1,4 +1,4 @@
-/** Runs every minute: trading calendar, holdings sync and the stop-loss warning. */
+/** Runs every minute: trading calendar, holdings sync and the plan level alerts (stop, targets, buy zone). */
 import type { Env } from "./env";
 import { syncFromMoomoo } from "./holdings";
 import { type Quote, quotes, tradingDays } from "./moomoo/api";
@@ -34,11 +34,29 @@ async function calendar(store: Store, token: string, now: Date): Promise<{ days:
   return { days, fetched: true };
 }
 
-type Trigger = { plan: Plan; quote: Quote };
+type Level = "SL" | "PARTIAL_TP" | "TP" | "ENTRY" | "EXPIRED";
+type Trigger = { plan: Plan; quote: Quote; level: Level };
 
-/** Held plans at or below their stop. Throws when a regular-session snapshot holds no prices at all. */
-async function findStops(store: Store, token: string, now: Date, regular: boolean): Promise<Trigger[] | null> {
-  const plans = (await store.activePlans()).filter((p) => p.state === "HELD" && p.sl !== null && !p.fired.includes("SL"));
+/** The levels a price crosses on a plan, each at most once (ported from the Python RuleEngine at 9c81be3). */
+function crossed(plan: Plan, price: number): Level[] {
+  const fired = new Set(plan.fired);
+  if (plan.state === "HELD") {
+    const out: Level[] = [];
+    if (plan.sl !== null && price <= plan.sl && !fired.has("SL")) out.push("SL");
+    if (plan.partialTp !== null && price >= plan.partialTp && !fired.has("PARTIAL_TP")) out.push("PARTIAL_TP");
+    if (plan.tp !== null && price >= plan.tp && !fired.has("TP")) out.push("TP");
+    return out;
+  }
+  // Not bought yet: a broken stop cancels the plan; the zone is announced once.
+  if (plan.sl !== null && price <= plan.sl) return ["EXPIRED"];
+  if (plan.state === "OPEN" && plan.entryLow !== null && plan.entryHigh !== null && price >= plan.entryLow &&
+    price <= plan.entryHigh && !fired.has("ENTRY")) return ["ENTRY"];
+  return [];
+}
+
+/** Levels crossed on watched plans. Throws when a regular-session snapshot holds no prices at all. */
+async function findLevels(store: Store, token: string, now: Date, regular: boolean): Promise<Trigger[] | null> {
+  const plans = (await store.activePlans()).filter((p) => p.state !== "HELD" || p.sl !== null || p.tp !== null);
   if (!plans.length) return null;
   const prices = await quotes(token, [...new Set(plans.map((p) => p.code))], now);
   // Outside regular hours a session field can legitimately be empty; in it, no price at all means a broken answer.
@@ -46,19 +64,46 @@ async function findStops(store: Store, token: string, now: Date, regular: boolea
   const triggers: Trigger[] = [];
   for (const plan of plans) {
     const quote = prices.get(plan.code);
-    if (quote && quote.price <= plan.sl!) triggers.push({ plan, quote }); // no price, no decision
+    if (quote) for (const level of crossed(plan, quote.price)) triggers.push({ plan, quote, level }); // no price, no decision
   }
   return triggers;
 }
 
-/** One message for all triggered stops; plans are marked fired only once Telegram accepted it. */
+function alertLine({ plan, quote, level }: Trigger): string {
+  const at = `${plan.code} at ${quote.price.toFixed(2)}`;
+  const session = `${SESSION_LABEL[quote.session]} trading`;
+  switch (level) {
+    case "SL":
+      return `⚠️ Stop-loss: ${at} (stop ${plan.sl!.toFixed(2)}, ${session}). Review this position.`;
+    case "PARTIAL_TP":
+      return `💰 Partial take-profit: ${at} (target ${plan.partialTp!.toFixed(2)}, ${session}). ` +
+        "A good spot to lock in some gains and trail your stop on the rest.";
+    case "TP":
+      return `✅ Take-profit: ${at} (target ${plan.tp!.toFixed(2)}, ${session}). ` +
+        "Consider taking profits here, or trail a tight stop if momentum is still strong.";
+    case "ENTRY":
+      return `🎯 Buy zone: ${at} (zone ${plan.entryLow!.toFixed(2)} - ${plan.entryHigh!.toFixed(2)}, ${session}). ` +
+        "Plan #" + plan.id + "'s entry is here; check your position size before buying.";
+    case "EXPIRED":
+      return `⌛ ${plan.code} fell to ${quote.price.toFixed(2)}, below plan #${plan.id}'s stop ${plan.sl!.toFixed(2)} before ` +
+        "you bought, so I've cancelled that plan.";
+  }
+}
+
+/** One message for all crossed levels; plans change only once Telegram accepted it. */
 async function warn(env: Env, store: Store, triggers: Trigger[], now: Date): Promise<void> {
-  const lines = triggers.map(({ plan, quote }) => `⚠️ Stop-loss: ${plan.code} at ${quote.price.toFixed(2)} ` +
-    `(stop ${plan.sl!.toFixed(2)}, ${SESSION_LABEL[quote.session]} trading). Review this position.`);
-  const text = lines.join("\n");
+  const text = triggers.map(alertLine).join("\n");
   if (!(await trySend(env, text))) return; // retried next minute
   await store.logChat("alert", text, now); // so the chat knows what it told you
-  for (const { plan } of triggers) await store.updatePlan({ ...plan, fired: [...plan.fired, "SL"] });
+  const byPlan = new Map<number, Trigger[]>();
+  for (const t of triggers) byPlan.set(t.plan.id, [...(byPlan.get(t.plan.id) ?? []), t]);
+  for (const list of byPlan.values()) {
+    const plan = list[0]!.plan;
+    const levels = list.map((t) => t.level);
+    const state = levels.includes("EXPIRED") ? "EXPIRED" : levels.includes("ENTRY") ? "TRIGGERED" : plan.state;
+    const fired = [...plan.fired, ...levels.map((l) => (l === "EXPIRED" ? "SL" : l))];
+    await store.updatePlan({ ...plan, state, fired });
+  }
 }
 
 async function failed(env: Env, store: Store): Promise<void> {
@@ -96,7 +141,7 @@ export async function runMinute(env: Env, store: Store, now: Date): Promise<void
       contacted = true;
     }
     if (inPriceWindow(now, days, env.PRICE_HOURS)) {
-      const found = await findStops(store, token, now, regular);
+      const found = await findLevels(store, token, now, regular);
       if (found) [triggers, contacted] = [found, true];
     }
   } catch (e) {

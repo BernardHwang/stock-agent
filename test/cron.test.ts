@@ -183,3 +183,48 @@ describe("runMinute robustness", () => {
     expect(texts[0]).toContain("US.NVDA");
   });
 });
+
+describe("runMinute level alerts", () => {
+  const snapshot = (prices: Record<string, number>) => (url: string) => telegramOk(url) ?? (url.endsWith("/quote/snapshot")
+    ? Response.json({ s: "ok", d: Object.entries(prices).map(([code, last_price]) => ({ code, last_price })) })
+    : moomoo(() => 316)(url));
+  const minute = plusMin(TUE_OPEN, 1); // 10:01, not a holdings-sync minute
+
+  it("tells a holding's partial and full take-profit once each", async () => {
+    const store = await connectedStore();
+    const plan = (await store.activePlans())[0]!;
+    await store.updatePlan({ ...plan, partialTp: 350 });
+    let price = 360;
+    const calls = mockFetch((url) => snapshot({ "US.MDB": price })(url));
+    await runMinute(env, store, minute);
+    price = 401;
+    await runMinute(env, store, plusMin(minute, 1));
+    await runMinute(env, store, plusMin(minute, 2));
+    const texts = sentTexts(calls);
+    expect(texts).toHaveLength(2);
+    expect(texts[0]).toContain("Partial take-profit: US.MDB at 360.00 (target 350.00");
+    expect(texts[1]).toContain("Take-profit: US.MDB at 401.00 (target 400.00");
+    expect((await store.activePlans())[0]!.fired).toEqual(["PARTIAL_TP", "TP"]);
+  });
+
+  it("tells a buy plan's entry into its zone once and marks it triggered", async () => {
+    const store = await connectedStore();
+    await store.savePlan("US.NVDA", { ...hold, action: "BUY", entryLow: 170, entryHigh: 180, tp: 220, sl: 150 }, "OPEN", TUE_OPEN);
+    const calls = mockFetch((url) => snapshot({ "US.MDB": 316, "US.NVDA": 175 })(url));
+    await runMinute(env, store, minute);
+    await runMinute(env, store, plusMin(minute, 1));
+    const texts = sentTexts(calls);
+    expect(texts).toEqual([expect.stringContaining("Buy zone: US.NVDA at 175.00 (zone 170.00 - 180.00")]);
+    expect(await store.planFor("US.NVDA")).toMatchObject({ state: "TRIGGERED", fired: ["ENTRY"] });
+  });
+
+  it("cancels a buy plan whose stop breaks before entry", async () => {
+    const store = await connectedStore();
+    const id = await store.savePlan("US.NVDA", { ...hold, action: "BUY", entryLow: 170, entryHigh: 180, tp: 220, sl: 150 }, "OPEN", TUE_OPEN);
+    const calls = mockFetch((url) => snapshot({ "US.MDB": 316, "US.NVDA": 149 })(url));
+    await runMinute(env, store, minute);
+    expect(sentTexts(calls)).toEqual([expect.stringContaining(`US.NVDA fell to 149.00, below plan #${id}'s stop 150.00`)]);
+    expect(await store.planFor("US.NVDA")).toBeNull();
+    expect((await store.getPlan(id))!.state).toBe("EXPIRED");
+  });
+});
