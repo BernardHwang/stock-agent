@@ -236,4 +236,15 @@ export class Store {
     ).bind(p.state, p.action, p.entryLow, p.entryHigh, p.partialTp, p.tp, p.sl, p.confidence, p.holdingMonths,
       p.trimPct, p.reasoning, JSON.stringify(p.fired), p.id).run();
   }
+
+  // Analyst consensus last seen per stock (event notes)
+  async consensusFor(code: string): Promise<{ rating: number | null; average: number | null } | null> {
+    return this.db.prepare("SELECT rating, average FROM consensus WHERE code = ?").bind(code)
+      .first<{ rating: number | null; average: number | null }>();
+  }
+
+  async saveConsensus(code: string, rating: number | null, average: number | null, at: Date): Promise<void> {
+    await this.db.prepare("INSERT OR REPLACE INTO consensus (code, rating, average, at) VALUES (?, ?, ?, ?)")
+      .bind(code, rating, average, at.toISOString()).run();
+  }
 }

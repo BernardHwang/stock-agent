@@ -5,5 +5,5 @@ await applyD1Migrations(env.DB, env.TEST_MIGRATIONS);
 
 // D1 storage is shared across tests in a file; start each test empty.
 beforeEach(async () => {
-  await env.DB.batch(["settings", "once_keys", "positions", "plans", "queue", "runs", "reports", "chat_log"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
+  await env.DB.batch(["settings", "once_keys", "positions", "plans", "queue", "runs", "reports", "chat_log", "consensus", "outcomes", "lessons"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
 });
