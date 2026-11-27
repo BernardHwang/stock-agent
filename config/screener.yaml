@@ -1,7 +1,0 @@
-# Weekly screen thresholds (fractions, e.g. 0.10 = 10%). Tune freely.
-min_revenue_growth: 0.10
-min_earnings_growth: 0.10
-max_peg: 2.5          # skipped when the data source has no PEG
-max_forward_pe: 60
-pullback_min: 0.10    # a "quality pullback" is 10-25% below the 52-week high
-pullback_max: 0.25

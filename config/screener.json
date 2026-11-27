@@ -1,0 +1,8 @@
+{
+  "_comment": "Weekly screen thresholds as fractions (0.10 = 10%). A quality pullback is pullbackMin-pullbackMax below the 52-week high.",
+  "maxForwardPe": 60,
+  "minRevenueGrowth": 0.1,
+  "minEarningsGrowth": 0.1,
+  "pullbackMin": 0.1,
+  "pullbackMax": 0.25
+}
