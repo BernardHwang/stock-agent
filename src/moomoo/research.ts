@@ -125,7 +125,10 @@ export interface EarningsItem {
   published: boolean;
 }
 
-/** The US earnings calendar from ``from`` to ``to`` (inclusive), read in spans of at most 7 days, largest companies first. */
+/**
+ * The US earnings calendar from ``from`` to ``to`` (inclusive), read in spans of at most 7 days. Only the 200 largest
+ * companies of each week: parsing more costs CPU the free plan doesn't have; smaller ones fall back to an estimate.
+ */
 export async function earnings(token: string, from: string, to: string): Promise<EarningsItem[]> {
   const spans: [string, string][] = [];
   for (let begin = from; begin <= to; begin = addDays(begin, 7)) {
@@ -133,7 +136,7 @@ export async function earnings(token: string, from: string, to: string): Promise
     spans.push([begin, end < to ? end : to]);
   }
   const lists = await Promise.all(spans.map(async ([begin, end]) => {
-    const query = new URLSearchParams({ market: "US", begin_date: begin, end_date: end, sort_type: "MARKET_CAP", count: "500" });
+    const query = new URLSearchParams({ market: "US", begin_date: begin, end_date: end, sort_type: "MARKET_CAP", count: "200" });
     const d = (await apiGet(token, `/api/v1.0/quote/earnings-calendar?${query}`)) as Obj | null;
     return (d?.items as Obj[] | undefined) ?? [];
   }));
