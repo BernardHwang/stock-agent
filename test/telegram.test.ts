@@ -50,7 +50,7 @@ describe("command center", () => {
     const [text] = await send("/help");
     expect(text).toContain("/probe [post] <path> [json]");
     expect(text).toContain("/aitest [model]");
-    expect(text).toContain("Stop-loss warning");
+    for (const part of ["Price alerts", "Morning brief", "Pre-open note", "Event notes", "Sunday review"]) expect(text).toContain(part);
   });
 
   it("/sync works like /moomoo sync", async () => {

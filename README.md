@@ -66,8 +66,25 @@ The cron fires every minute.
 
 - **Trading calendar:** fetched from moomoo once per New York day.
 - **Holdings sync:** every 15 minutes in the US regular session, plus 07:55 Malaysia time.
-- **Stop-loss check:** every minute inside the price window. The price comes from the field of the session the
-  New York clock is in.
+- **Price alerts:** every minute inside the price window, once per level. Holdings: stop-loss, partial take-profit
+  and take-profit. Buy plans: the buy zone is reached, or the stop breaks first (the plan is then cancelled). The
+  price comes from the field of the session the New York clock is in.
+- **Analysis queue:** one analysis at a time, at most `MAX_RUNS_PER_DAY` a day. New holdings, Monday 20:00 (every
+  holding), event notes on a holding and the Sunday review's top idea all queue one.
+
+Daily jobs run on the first cron minute at or after their Malaysia time (`OWNER_TZ`), once a day, within an hour
+of it (`src/schedule.ts`):
+
+| Time | What |
+|---|---|
+| 07:40 | Plan scoring: each plan's first level hit and its 4/12/26-week return; a decisive outcome writes a lesson that the next analysis of that stock reads |
+| 07:50 | Analyst consensus check on holdings (a new rating or an average target moved 5%+ is an event) |
+| 08:00 | Morning brief after each US trading day: indexes, holdings vs cost, stops and targets, earnings in 7 days, news, and one AI line |
+| 10:00 Sunday | Weekly review: the week, the plan scorecard, up to 3 screener ideas (the top one is analysed) |
+| 21:00 | Pre-open note on trading days, when holdings move pre-market or report earnings |
+| every 30 min | Event notes inside the price window: major relevant news or a 5% move, at most 3 a day |
+
+AI lines in briefs, notes, lessons and the review are skipped at 8,500 neurons a day, so analyses keep their budget.
 - **Failures:** after 3 failed minutes you get one "moomoo isn't answering as expected" note, and one "reachable again" note
   when it recovers.
 

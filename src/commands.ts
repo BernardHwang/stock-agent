@@ -42,7 +42,14 @@ const HELP = [
   "/aitest [model] - tokens and neurons of one AI call (free: 10,000 neurons a day)",
   "",
   "Automatic",
-  "Stop-loss warning - every minute on US trading days (24h incl. pre-market, after-hours and overnight), once per plan",
+  "Price alerts - every minute on US trading days (24h incl. pre-market, after-hours and overnight), once per level: " +
+    "stop-loss, partial and full take-profit on holdings; buy zone reached (or stop broken first) on buy plans",
+  "Morning brief - 08:00 Malaysia time after each US trading day: indexes, holdings vs cost, stops and targets, earnings, news",
+  "Pre-open note - 21:00 Malaysia time on trading days, when holdings move pre-market or report earnings",
+  "Event notes - every 30 min: major news, a 5% move or an analyst target change (at most 3 a day); " +
+    "an event on a holding also queues a fresh analysis",
+  "Sunday review - 10:00 Malaysia time: the week, the plan scorecard and up to 3 screener ideas (the top one analysed)",
+  "Plan scoring - daily: each plan's outcome after 4, 12 and 26 weeks; the lesson feeds the next analysis",
   "Holdings sync - every 15 min in US market hours, and 07:55 Malaysia time",
   "moomoo problems - one note after 3 failed minutes, one when it recovers",
   "New holdings get an analysis; every holding is reviewed Monday 20:00 Malaysia time",
@@ -50,8 +57,6 @@ const HELP = [
   "Limits: 3 analyses and 30 chat messages a day, within the free 10,000 AI neurons",
   "",
   "/help - this guide (the \"/\" menu lists every command)",
-  "",
-  "Coming next: daily briefs.",
 ].join("\n");
 
 const UNKNOWN = "Unknown command. Send /help.";

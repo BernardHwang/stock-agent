@@ -5,7 +5,8 @@ import { CALLBACK_PATH, handleCallback } from "./moomoo/oauth";
 import { ensureSetup } from "./setup";
 import { Store } from "./store";
 import { hasValidSecret, send, webhookSecret } from "./telegram";
-import { drainQueue, scheduleReviews } from "./workflow";
+import { runSchedule } from "./schedule";
+import { drainQueue } from "./workflow";
 
 export { AnalysisWorkflow } from "./workflow";
 
@@ -44,7 +45,7 @@ export default {
     const now = new Date(controller.scheduledTime);
     await guarded("setup", () => ensureSetup(env, store, now));
     await guarded("minute job", () => runMinute(env, store, now));
-    await guarded("review schedule", () => scheduleReviews(env, store, now));
+    await guarded("schedule", () => runSchedule(env, store, now));
     await guarded("analysis queue", () => drainQueue(env, store, now));
   },
 } satisfies ExportedHandler<Env>;
